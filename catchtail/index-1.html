@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>WebGL2 Rainbow + Orbiting Dot</title>
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; -webkit-touch-callout: none; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+    body, canvas { touch-action: none; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+    #ui { position: fixed; left: .75rem; bottom: .75rem; color: white; font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif; opacity: .85; user-select: none; }
+  </style>
+</head>
+<body>
+  <canvas id="glcanvas"></canvas>
+  <div id="ui">Tap / press <kbd>Space</kbd> to toggle direction</div>
+
+  <script>
+    (function(){
+      const canvas = document.getElementById('glcanvas');
+      const gl = canvas.getContext('webgl2', {
+        alpha: false,
+        antialias: false,
+        desynchronized: true,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: false
+      });
+      if (!gl) {
+        document.body.innerHTML = '<p style="color:white;padding:1rem;font:16px system-ui">WebGL2 not supported.</p>';
+        return;
+      }
+
+      // Vertex shader: full-screen triangle
+      const VS = `#version 300 es
+      precision highp float;
+      layout(location = 0) in vec2 aPos;
+      out vec2 vUV;
+      void main(){
+        vUV = aPos * 0.5 + 0.5;
+        gl_Position = vec4(aPos, 0.0, 1.0);
+    }`;
+
+      // Fragment shader: rainbow bg + white center circle + orbiting black dot
+    const FS = `#version 300 es
+      precision highp float;
+      out vec4 fragColor;
+      in vec2 vUV;
+
+      uniform vec2  uResolution;
+      uniform float uTime;
+
+      // Dot controls (computed on CPU for continuity when toggling)
+      uniform float uTheta;     // current angle (radians)
+      uniform float uDotPx;     // dot radius in pixels (screen-space)
+      uniform float uOffsetPx;  // offset from circle edge in pixels
+
+      vec3 hsv2rgb(vec3 c){
+        vec3 p = abs(fract(c.xxx + vec3(0., 2./3., 1./3.)) * 6. - 3.);
+        vec3 rgb = clamp(p - 1., 0., 1.);
+        return c.z * mix(vec3(1.), rgb, c.y);
+      }
+
+      void main(){
+        float pixel = 1.0 / max(uResolution.y, 1.0);
+
+        // Normalize to -0.5..0.5 and aspect-compensate X so circles stay round
+        vec2 centered = vUV - 0.5;
+        float aspect = uResolution.x / max(uResolution.y, 1.0);
+        vec2 p = vec2(centered.x * aspect, centered.y);
+
+        // Rainbow background
+        float angle = atan(p.y, p.x);
+        float hue = fract(angle / 6.28318530718 + 0.5 + uTime * 0.05 + vUV.x * 0.15);
+        vec3 bg = hsv2rgb(vec3(hue, 1.0, 1.0));
+
+        // Central white circle
+        float r = 0.2; // base circle radius in p-space
+        float d = length(p);
+        float edge = smoothstep(r, r - 0.006, d);
+        vec3 color = mix(vec3(1.0), bg, edge);
+
+        // Orbiting black dot (40px diameter => 20px radius), just outside circle
+        float offset = uOffsetPx * pixel;
+        float dotR   = uDotPx * pixel;
+        vec2  dotC   = vec2(cos(uTheta), sin(uTheta)) * (r + offset);
+
+        float dd = length(p - dotC);
+        float dotMask = 1.0 - smoothstep(dotR, dotR + 1.5*pixel, dd);
+        color = mix(color, vec3(0.0), dotMask);
+
+        fragColor = vec4(color, 1.0);
+  }`;
+
+  function createShader(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.error(gl.getShaderInfoLog(sh));
+      throw new Error('Shader compile error');
+    }
+    return sh;
+  }
+  function createProgram(vsSrc, fsSrc){
+    const vs = createShader(gl.VERTEX_SHADER, vsSrc);
+    const fs = createShader(gl.FRAGMENT_SHADER, fsSrc);
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(prog));
+      throw new Error('Program link error');
+    }
+    gl.deleteShader(vs); gl.deleteShader(fs);
+    return prog;
+  }
+
+  const program = createProgram(VS, FS);
+  gl.useProgram(program);
+
+      // Geometry: single full-screen triangle
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+      // Uniforms
+  const uResolution = gl.getUniformLocation(program, 'uResolution');
+  const uTime       = gl.getUniformLocation(program, 'uTime');
+  const uTheta      = gl.getUniformLocation(program, 'uTheta');
+  const uDotPx      = gl.getUniformLocation(program, 'uDotPx');
+  const uOffsetPx   = gl.getUniformLocation(program, 'uOffsetPx');
+
+      // State
+  let start   = performance.now();
+  let prev    = start;
+      let dir     = 1.0;           // +1 => clockwise
+      let speed   = 1.8;           // rad/sec
+      let theta   = Math.PI * 0.5; // start at top (90deg)
+      let dotPx   = 20.0;          // radius in px (=> 40px diameter)
+      let offsetPx= 12.0;          // gap from white circle edge
+
+      function resize(){
+        const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+        const width = Math.floor(innerWidth * dpr);
+        const height = Math.floor(innerHeight * dpr);
+        if (canvas.width !== width || canvas.height !== height){
+          canvas.width = width;
+          canvas.height = height;
+        }
+        gl.viewport(0, 0, canvas.width, canvas.height);
+      }
+      window.addEventListener('resize', resize, { passive: true });
+      resize();
+
+      function frame(tMs){
+        const dt = (tMs - prev) * 0.001;
+        const time = (tMs - start) * 0.001;
+        prev = tMs;
+
+        // Integrate angle so toggling direction is seamless
+        theta += dir * speed * dt;
+
+        gl.uniform2f(uResolution, canvas.width, canvas.height);
+        gl.uniform1f(uTime, time);
+        gl.uniform1f(uTheta, theta);
+        gl.uniform1f(uDotPx, dotPx);
+        gl.uniform1f(uOffsetPx, offsetPx);
+
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        requestAnimationFrame(frame);
+      }
+      requestAnimationFrame(frame);
+
+      // Input: tap/click or Space toggles direction (without jumping)
+      function toggle(){ dir = -dir; }
+
+      canvas.addEventListener('pointerdown', (e)=>{ e.preventDefault(); toggle(); });
+      window.addEventListener('keydown', (e)=>{
+        if (e.code === 'Space') { e.preventDefault(); toggle(); }
+      });
+
+      // Guard against context loss
+      canvas.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); });
+      canvas.addEventListener('webglcontextrestored', ()=>{ location.reload(); });
+    })();
+  </script>
+</body>
+</html>

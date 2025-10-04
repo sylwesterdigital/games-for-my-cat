@@ -1,0 +1,198 @@
+<!-- Minimal usage example -->
+<button onclick="SFX.init(); SFX.playSound('pip')">pip</button>
+<button onclick="SFX.playSound('click')">click</button>
+<button onclick="SFX.playSound('hit')">hit</button>
+<button onclick="SFX.playSound('zong')">zong</button>
+
+<script>
+
+/**
+ * dSFX — ultra-small Web Audio game SFX helper.
+ * Usage: SFX.init(); SFX.playSound('pip', { duration:0.12, frequency:880 })
+ */
+  const SFX = (() => {
+    const ctxState = { ctx: null, master: null };
+
+    const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+    const now = () => (ctxState.ctx ? ctxState.ctx.currentTime : 0);
+
+  // Default ADSR (seconds) + synth opts
+    const base = {
+    type: 'tone',        // 'tone' | 'noise'
+    wave: 'sine',        // 'sine' | 'square' | 'sawtooth' | 'triangle'
+    duration: 0.08,      // total length (fallback if no release)
+    attack: 0.002,
+    decay: 0.06,
+    sustain: 0.0,
+    release: 0.04,
+    volume: 0.5,
+    pan: 0,              // -1..1
+    frequency: 880,
+    frequencyEnd: null,  // if set, linear sweep to this freq
+    detune: 0,           // cents
+    freqRand: 0,         // randomize frequency by ±this fraction (e.g. 0.05 = ±5%)
+    filter: null,        // { type:'lowpass'|'highpass'|'bandpass', frequency: 1200, Q: 0.7 }
+  };
+
+  // Small preset set: pip, click, hit, zong
+  const presets = {
+    pip:   { ...base, type:'tone', wave:'sine',  attack:0.001, decay:0.06, sustain:0, release:0.03, duration:0.09, frequency:1200, freqRand:0.04, volume:0.4 },
+    click: { ...base, type:'noise',              attack:0.001, decay:0.02, sustain:0, release:0.02, duration:0.03, filter:{type:'highpass',frequency:3000,Q:0.8}, volume:0.35 },
+    hit:   { ...base, type:'noise',              attack:0.001, decay:0.12, sustain:0, release:0.06, duration:0.16, filter:{type:'bandpass',frequency:500,Q:2}, freqRand:0.1, volume:0.5 },
+    zong:  { ...base, type:'tone', wave:'sine',  attack:0.003, decay:0.5,  sustain:0, release:0.25, duration:0.7,  frequency:220,  frequencyEnd:110, volume:0.45 },
+  };
+
+  // ——— internals ———
+  const ensureCtx = () => {
+    if (ctxState.ctx) return ctxState.ctx;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const master = ctx.createGain();
+    master.gain.value = 0.9;
+    master.connect(ctx.destination);
+    ctxState.ctx = ctx;
+    ctxState.master = master;
+    return ctx;
+  };
+
+  const createNoiseBuffer = (ctx) => {
+    const length = 0.5 * ctx.sampleRate; // 0.5s buffer
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+      return buffer;
+  };
+  let sharedNoise = null;
+
+  const scheduleADSR = (gainNode, t0, { attack, decay, sustain, release, duration, volume }) => {
+    const g = gainNode.gain;
+    const a = clamp(attack, 0, 2);
+    const d = clamp(decay, 0, 3);
+    const r = clamp(release ?? 0, 0, 3);
+    const total = duration ?? (a + d + r || 0.1);
+    const sustainLevel = clamp(sustain ?? 0, 0, 1);
+
+    g.cancelScheduledValues(t0);
+    g.setValueAtTime(0.0001, t0);
+    g.linearRampToValueAtTime(volume, t0 + a);
+    g.linearRampToValueAtTime(volume * sustainLevel, t0 + a + d);
+    // Hold until release start (total - r)
+    const relStart = Math.max(t0 + a + d, t0 + total - r);
+    g.setValueAtTime(g.value, relStart);
+    g.linearRampToValueAtTime(0.0001, relStart + r);
+    return { end: relStart + r };
+  };
+
+  const applyFilter = (ctx, src, opts) => {
+    if (!opts.filter) return src;
+    const { type, frequency, Q } = opts.filter;
+    const biquad = ctx.createBiquadFilter();
+    biquad.type = type || 'lowpass';
+    biquad.frequency.value = frequency ?? 1000;
+    biquad.Q.value = Q ?? 0.0001;
+    src.connect(biquad);
+    return biquad;
+  };
+
+  const applyPanner = (ctx, src, pan) => {
+    if (pan == null) return src;
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (!p) return src;
+    p.pan.value = clamp(pan, -1, 1);
+    src.connect(p);
+    return p;
+  };
+
+  // ——— public API ———
+  return {
+    init() {
+      const ctx = ensureCtx();
+      // Must be resumed by a user gesture on some browsers
+      if (ctx.state === 'suspended') ctx.resume();
+    },
+
+    /**
+     * Play a preset or custom sound.
+     * @param {string} name - 'pip' | 'click' | 'hit' | 'zong' | any custom key
+     * @param {Object} opts - overrides; see "base" for fields
+     * @returns {{ stop: () => void, endedAt: number }}
+     */
+    playSound(name, opts = {}) {
+      const ctx = ensureCtx();
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const preset = presets[name] || base;
+      const o = { ...preset, ...opts };
+
+      const t0 = Math.max(now(), ctx.currentTime);
+      const outGain = ctx.createGain();
+
+      // Source
+      let sourceNode;
+      if (o.type === 'tone') {
+        const osc = ctx.createOscillator();
+        osc.type = o.wave || 'sine';
+        const baseFreq = o.frequency ?? 440;
+        const jitter = (o.freqRand ?? 0) * baseFreq;
+        const fStart = baseFreq + (Math.random() * 2 - 1) * jitter;
+        const fEnd = (o.frequencyEnd ?? fStart) + (Math.random() * 2 - 1) * jitter;
+
+        osc.frequency.setValueAtTime(Math.max(1, fStart), t0);
+        if (fEnd !== fStart) osc.frequency.linearRampToValueAtTime(Math.max(1, fEnd), t0 + (o.duration ?? 0.1));
+        if (o.detune) osc.detune.setValueAtTime(o.detune, t0);
+
+        sourceNode = osc;
+      } else {
+        if (!sharedNoise) sharedNoise = createNoiseBuffer(ctx);
+        const noise = ctx.createBufferSource();
+        noise.buffer = sharedNoise;
+        noise.loop = false;
+        sourceNode = noise;
+      }
+
+      // Envelope -> Filter -> Panner -> Master
+      const env = ctx.createGain();
+      env.gain.value = 0;
+      const filtered = applyFilter(ctx, env, o);
+      const panned = applyPanner(ctx, filtered, o.pan);
+      const chainEnd = panned || filtered || env;
+
+      chainEnd.connect(ctxState.master);
+      sourceNode.connect(env);
+
+      const { end } = scheduleADSR(env, t0, o);
+      outGain.connect(ctxState.master);
+
+      // Start/stop
+      if (sourceNode.start) sourceNode.start(t0);
+      const stopAt = end + 0.01;
+      if (sourceNode.stop) sourceNode.stop(stopAt);
+
+      // For oscillators ensure disconnection after stop
+      sourceNode.onended = () => {
+        try { sourceNode.disconnect(); } catch {}
+        try { env.disconnect(); } catch {}
+        try { chainEnd.disconnect && chainEnd.disconnect(); } catch {}
+      };
+
+      return {
+        stop: () => {
+          const t = now();
+          env.gain.cancelScheduledValues(t);
+          env.gain.setTargetAtTime(0.0001, t, 0.01);
+          try { sourceNode.stop(t + 0.03); } catch {}
+        },
+        endedAt: stopAt
+      };
+    },
+
+    // Expose presets for tweaking or adding
+    presets,
+
+    // Master volume 0..1
+    setMasterVolume(v) {
+      ensureCtx();
+      ctxState.master.gain.value = clamp(v, 0, 1);
+    }
+  };
+})();
+</script>
