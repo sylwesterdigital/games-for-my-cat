@@ -2,766 +2,1443 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <link rel="icon" href="data:,">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+
   <title>WebGL2 Rainbow — Orbit & Hit</title>
 
-
   <style>
-    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; -webkit-touch-callout: none; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+
+    :root{
+      /* This angle is animated from JS so the rainbow matches the game's motion */
+      --rainbow-rot: 0turn;
+    }
+    .rainbowText{
+      background: conic-gradient(from var(--rainbow-rot),
+        hsl(0deg 100% 55%),
+        hsl(45deg 100% 55%),
+        hsl(90deg 100% 45%),
+        hsl(180deg 100% 50%),
+        hsl(220deg 100% 60%),
+        hsl(280deg 100% 60%),
+        hsl(340deg 100% 60%),
+        hsl(360deg 100% 55%)
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: rgba(0,0,0,0);
+    }
+    html { font-size: 16px; }
     body, canvas { touch-action: none; }
-    canvas { display: block; width: 100vw; height: 100vh; }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100svh;
+      display: block;
+    }
+
+    #resultsBtn, #globalBtn{
+      position: fixed; top: .6rem; z-index: 30;
+      background: rgba(255,255,255,.92);
+      color:#000; font:600 .875rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      border-radius: 999rem; padding: .35rem .6rem; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: .4rem; box-shadow: 0 1.25rem 3.125rem rgba(0,0,0,.2);
+    }
+
+
+
+    #resultsBtn { left: .6rem; }
+    #globalBtn { left: 6.2rem; }
+
+    #resultsBtn .dot {
+      width: .6rem;
+      height: .6rem;
+      border-radius: 999rem;
+      background: #000;
+      opacity: .35;
+    }
+
+    #avatarBtn {
+      right: .6rem;
+      width: 2.75rem;
+      height: 2.75rem;
+      padding: 0;
+      border-radius: 999rem;
+      overflow: hidden;
+      background: rgba(255,255,255,.95);
+    }
+    #avatarBtn img,
+    #avatarBtn .placeholder {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    #avatarBtn .placeholder {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font: 700 1rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: #111;
+      background: linear-gradient(135deg,#e9eef6,#d7e4ff);
+    }
+
+    /* avatar wrap (holds circle + nickname) */
+    #avatarWrap{
+      position: fixed;
+      top: .6rem;
+      right: .6rem;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: .3rem;
+    }
+
+    /* move button-specific positioning from #avatarBtn to the wrap */
+    #avatarBtn{
+      width: 2.75rem;
+      height: 2.75rem;
+      padding: 0;
+      border-radius: 999rem;
+      overflow: hidden;
+      background: rgba(255,255,255,.95);
+      box-shadow: 0 1.25rem 3.125rem rgba(0,0,0,.2);
+    }
+
+    /* nickname below avatar */
+    #nickChip{
+      max-width: 8.5rem;
+      padding: .2rem .5rem;
+      border-radius: .5rem;
+      background: rgba(255,255,255,.92);
+      color: #000;
+      font: 600 .75rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      line-height: 1;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      display: none;          /* hidden until we have a nickname */
+      box-shadow: 0 .4rem 1rem rgba(0,0,0,.15);
+    }
+
+    /* footer score line */
+    #footerScore{
+      position: fixed;
+      left: 50%;
+      bottom: .5rem;
+      transform: translateX(-50%);
+      padding: .35rem .6rem;
+      border-radius: .5rem;
+      background: rgba(255,255,255,.9);
+      color: #000;
+      font: 600 .85rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      pointer-events: none;
+      z-index: 12;
+      max-width: calc(100vw - 1.2rem);
+      text-align: center;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      display: none;
+      background: rgba(0,0,0,.45);
+      backdrop-filter: blur(.125rem);
+      align-items: center;
+      justify-content: center;
+    }
+    .overlay.open { display: flex; }
+
+    .card {
+      width: min(92vw, 32.5rem);
+      background: #fff;
+      color: #111;
+      border-radius: 1rem;
+      box-shadow: 0 1.25rem 3.125rem rgba(0,0,0,.35);
+      padding: 1rem 1rem 1.25rem;
+      font: .875rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      max-height: 86vh;
+      overflow: auto;
+    }
+    .card h2 {
+      margin: .375rem 0 .75rem;
+      font-size: 1.25rem;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .75rem;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: .375rem;
+      margin: .625rem 0;
+    }
+    .field label {
+      font-weight: 600;
+      font-size: .75rem;
+      color: #333;
+    }
+    .field input {
+      border-radius: .75rem;
+      border: .0625rem solid #e1e1e8;
+      padding: .625rem .75rem;
+      font: inherit;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .actions {
+      display: flex;
+      gap: .5rem;
+      justify-content: flex-end;
+      margin-top: .625rem;
+    }
+    .btn {
+      border: none;
+      border-radius: .75rem;
+      padding: .625rem .875rem;
+      cursor: pointer;
+      font-weight: 600;
+      background: #111;
+      color: #fff;
+    }
+    .btn.ghost { background: #f0f0f5; color: #111; }
 
     #hud {
-      position: fixed; left: .75rem; bottom: .75rem;
-      color: #000; font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      opacity: .95; user-select: none; pointer-events: none; line-height: 1.25;
-      background: rgba(255,255,255,.9); padding: .35rem .6rem; border-radius: .5rem;
+      position: fixed;
+      left: .75rem;
+      bottom: .75rem;
+      color: #000;
+      font: .75rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      opacity: .95;
+      user-select: none;
+      pointer-events: none;
+      line-height: 1.25;
+      background: rgba(255,255,255,.9);
+      padding: .35rem .6rem;
+      border-radius: .5rem;
+      z-index: 10;
     }
-    
-    #centerCount {
-      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
-      color: white; 
-      font:600 29px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: none; 
-      border-radius: 999px; padding: .35rem 1rem;
-      user-select: none; pointer-events: none;
-      mix-blend-mode: exclusion;
-    }
-    #centerCount.win  { background: rgba(0,255,160,.9); color:#022; }    
-    #centerCount.lose { color:white }
 
-    #stats{
-      position:fixed; left:50%; top:.5rem; transform:translateX(-50%);
-      color:#000; font:600 24px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background:rgba(255,255,255,.9); border-radius:.5rem; padding:.25rem .6rem;
-      user-select:none; pointer-events:none; opacity:.95;
-      white-space: pre-line; 
+    #centerCount {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%,-50%);
+      color: #fff;
+      font: 600 1.4rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: none;
+      border-radius: 999rem;
+      padding: .35rem 1rem;
+      user-select: none;
+      pointer-events: none;
+      mix-blend-mode: exclusion;
+      z-index: 5;
+    }
+    #centerCount.win { background: rgba(0,255,160,.9); color: #022; }
+    #centerCount.lose { color: #fff; }
+
+    #stats {
+      position: fixed;
+      left: 50%;
+      top: 4rem;
+      transform: translateX(-50%);
+      color: #000;
+      font: 600 1.3rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: rgba(255,255,255,.9);
+      border-radius: .5rem;
+      padding: .25rem .6rem;
+      user-select: none;
+      pointer-events: none;
+      opacity: .95;
+      white-space: pre-line;
+      text-align: center;
+      z-index: 10;
+    }
+
+    #lastHit {
+      position: fixed;
+      left: 50%;
+      top: 3.25rem;
+      transform: translateX(-50%);
+      color: #000;
+      font: 600 1.125rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: rgba(255,255,255,.9);
+      border-radius: .5rem;
+      padding: .15rem .5rem;
+      user-select: none;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .25s;
+      white-space: nowrap;
+      z-index: 10;
+    }
+
+    #splash {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(75rem 75rem at 50% 50%, rgba(255,255,255,.12), rgba(0,0,0,.9) 60%), #000;
+      box-sizing: border-box;
+    }
+    #splashCard {
+      color: #fff;
+      text-align: center;
+      width: min(92vw, 35rem);
+      font: 1rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: 1.5rem 1.25rem;
+      border-radius: 1.25rem;
+      background: rgba(255,255,255,.06);
+      backdrop-filter: blur(.25rem);
+      box-shadow: 0 1.25rem 3.75rem rgba(0,0,0,.5);
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #splash h1 {
+      margin: 0 0 .5rem;
+      font-size: 1.75rem;
+      letter-spacing: .03125rem;
+    }
+    #splash p { margin: 0 0 1rem; color: #d9e0ea; }
+
+    #startBtn {
+      display: inline-block;
+      padding: .625rem 1rem;
+      border-radius: 999rem;
+      border: none;
+      cursor: pointer;
+      background: #00ff99;
+      color: #061;
+      font-weight: 800;
+      box-shadow: 0 .625rem 1.875rem rgba(0,255,160,.35);
+      font-size: 1.25rem;
+    }
+
+    #pausedBadge {
+      position: fixed;
+      right: .6rem;
+      bottom: .6rem;
+      z-index: 20;
+      background: rgba(255,255,255,.95);
+      color: #000;
+      font: 700 .75rem system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      padding: .25rem .5rem;
+      border-radius: .4rem;
+      display: none;
+    }
+    #pausedBadge.show { display: block; }
+
+    #profileAvatar {
+      width: 11.25rem;
+      height: 11.25rem;
+      border-radius: 999rem;
+      margin: .75rem auto .75rem;
+      background: #f2f4f8 center/cover no-repeat;
+      position: relative;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 .125rem rgba(0,0,0,.06);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #666;
+      font-weight: 700;
+    }
+    .avatarHint {
+      display: block;
+      margin: .625rem auto .25rem;
+      padding: .375rem .625rem;
+      font-size: .75rem;
+      line-height: 1.2;
+      color: #666;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .resultItem {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: .625rem;
+      align-items: center;
+      padding: .625rem .5rem;
+      border-bottom: .0625rem solid #eee;
+    }
+    .badge {
+      border-radius: .625rem;
+      padding: .25rem .5rem;
+      font-weight: 700;
+      background: #111;
+      color: #fff;
+      font-size: .75rem;
+      min-width: 3.5rem;
       text-align: center;
     }
+    .muted { color: #666; font-size: .75rem; }
+    .sub { color: #333; font-weight: 600; }
 
-    #lastHit{
-      position:fixed; left:50%; top:3.25rem; transform:translateX(-50%);
-      color:#000; font:600 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background:rgba(255,255,255,.9); border-radius:.5rem; padding:.15rem .5rem;
-      user-select:none; pointer-events:none; opacity:0; transition:opacity .25s;
-      white-space:nowrap;
+    @media (max-width: 32.5rem) {
+      .row { grid-template-columns: 1fr; }
+      .row > .field { min-width: 0; }
+      .row > .field input { min-width: 0; width: 100%; box-sizing: border-box; }
     }
 
+    .splashGif {
+      display: block;
+      width: 100%;
+      max-width: 32.5rem;
+      height: auto;
+      max-height: 42vh;
+      object-fit: contain;
+      border-radius: .75rem;
+      margin: .625rem 0 .875rem;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: optimizeQuality;
+    }
+
+    @media (max-width: 26.25rem) {
+      .splashGif { max-height: 36vh; }
+    }
 
 
   </style>
-
-
 </head>
 <body>
   <canvas id="glcanvas"></canvas>
-  <div id="centerCount">50</div>
-  <div id="stats"></div>
-  <div id="lastHit"></div>
 
-  <div id="hud"><b>Tap/Click or press <kbd>Space</kbd> to HIT • Tap/Space while Game Over to Restart • <kbd>R</kbd> also restarts</b></div>
+<!-- New top chrome -->
+<div id="resultsBtn" title="Results">Personal</div>
+<div id="globalBtn"  title="Global">Global</div>
 
-  <script>
+<!-- AVATAR + NICK WRAP -->
+<div id="avatarWrap">
+  <div id="avatarBtn" title="Profile">
+    <div class="placeholder">🙂</div>
+  </div>
+  <div id="nickChip" aria-live="polite"></div>
+</div>
 
+<!-- Existing UI -->
+<div id="centerCount">50</div>
+<div id="stats"></div>
+<div id="lastHit"></div>
 
+<!-- <div id="hud"><b>Click/Tap or <kbd>Space</kbd> to HIT • <kbd>P</kbd> to Pause/Resume • <kbd>R</kbd> to Restart (only when not paused or in forms)</b></div> -->
 
+<div id="pausedBadge">PAUSED</div>
 
-/**
- * dSFX — ultra-small Web Audio game SFX helper.
- * Usage: SFX.init(); SFX.playSound('pip', { duration:0.12, frequency:880 })
- */
-    const SFX = (() => {
-      const ctxState = { ctx: null, master: null };
+<!-- Splash -->
+<div id="splash" aria-modal="true" role="dialog">
+  <div id="splashCard">
+    <h1>Orbit &amp; Hit</h1>
 
-      const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
-      const now = () => (ctxState.ctx ? ctxState.ctx.currentTime : 0);
-
-  // Default ADSR (seconds) + synth opts
-      const base = {
-    type: 'tone',        // 'tone' | 'noise'
-    wave: 'sine',        // 'sine' | 'square' | 'sawtooth' | 'triangle'
-    duration: 0.08,      // total length (fallback if no release)
-    attack: 0.002,
-    decay: 0.06,
-    sustain: 0.0,
-    release: 0.04,
-    volume: 0.5,
-    pan: 0,              // -1..1
-    frequency: 880,
-    frequencyEnd: null,  // if set, linear sweep to this freq
-    detune: 0,           // cents
-    freqRand: 0,         // randomize frequency by ±this fraction (e.g. 0.05 = ±5%)
-    filter: null,        // { type:'lowpass'|'highpass'|'bandpass', frequency: 1200, Q: 0.7 }
-  };
-
-  // Small preset set: pip, click, hit, zong, win
-  const presets = {
-    pip:   { ...base, type:'tone', wave:'sine',  attack:0.001, decay:0.06, sustain:0, release:0.03, duration:0.09, frequency:1200, freqRand:0.04, volume:0.4 },
-    click: { ...base, type:'noise',              attack:0.001, decay:0.02, sustain:0, release:0.02, duration:0.03, filter:{type:'highpass',frequency:3000,Q:0.8}, volume:0.35 },
-    hit:   { ...base, type:'noise',              attack:0.001, decay:0.12, sustain:0, release:0.06, duration:0.16, filter:{type:'bandpass',frequency:500,Q:2}, freqRand:0.1, volume:0.5 },
-    zong:  { ...base, type:'tone', wave:'sine',  attack:0.003, decay:0.5,  sustain:0, release:0.25, duration:0.7,  frequency:220,  frequencyEnd:110, volume:0.45 },
-    win:   { ...base, type:'tone', wave:'triangle', attack:0.005, decay:0.25, sustain:0.0, release:0.22, duration:0.5,
-     volume:0.5, pan:0, frequency:520, frequencyEnd:1560, detune:0, freqRand:0.02,
-     filter:{ type:'lowpass', frequency:3400, Q:0.7 } }
-   };
-
-  // ——— internals ———
-   const ensureCtx = () => {
-    if (ctxState.ctx) return ctxState.ctx;
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const master = ctx.createGain();
-    master.gain.value = 0.9;
-    master.connect(ctx.destination);
-    ctxState.ctx = ctx;
-    ctxState.master = master;
-    return ctx;
-  };
-
-  const createNoiseBuffer = (ctx) => {
-    const length = 0.5 * ctx.sampleRate; // 0.5s buffer
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
-      return buffer;
-  };
-  let sharedNoise = null;
-
-  const scheduleADSR = (gainNode, t0, { attack, decay, sustain, release, duration, volume }) => {
-    const g = gainNode.gain;
-    const a = clamp(attack, 0, 2);
-    const d = clamp(decay, 0, 3);
-    const r = clamp(release ?? 0, 0, 3);
-    const total = duration ?? (a + d + r || 0.1);
-    const sustainLevel = clamp(sustain ?? 0, 0, 1);
-
-    g.cancelScheduledValues(t0);
-    g.setValueAtTime(0.0001, t0);
-    g.linearRampToValueAtTime(volume, t0 + a);
-    g.linearRampToValueAtTime(volume * sustainLevel, t0 + a + d);
-    // Hold until release start (total - r)
-    const relStart = Math.max(t0 + a + d, t0 + total - r);
-    g.setValueAtTime(g.value, relStart);
-    g.linearRampToValueAtTime(0.0001, relStart + r);
-    return { end: relStart + r };
-  };
-
-  const applyFilter = (ctx, src, opts) => {
-    if (!opts.filter) return src;
-    const { type, frequency, Q } = opts.filter;
-    const biquad = ctx.createBiquadFilter();
-    biquad.type = type || 'lowpass';
-    biquad.frequency.value = frequency ?? 1000;
-    biquad.Q.value = Q ?? 0.0001;
-    src.connect(biquad);
-    return biquad;
-  };
-
-  const applyPanner = (ctx, src, pan) => {
-    if (pan == null) return src;
-    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-    if (!p) return src;
-    p.pan.value = clamp(pan, -1, 1);
-    src.connect(p);
-    return p;
-  };
-
-  // ——— public API ———
-  return {
-    init() {
-      const ctx = ensureCtx();
-      // Must be resumed by a user gesture on some browsers
-      if (ctx.state === 'suspended') ctx.resume();
-    },
-
-    /**
-     * Play a preset or custom sound.
-     * @param {string} name - 'pip' | 'click' | 'hit' | 'zong' | 'win' | any custom key
-     * @param {Object} opts - overrides; see "base" for fields
-     * @returns {{ stop: () => void, endedAt: number }}
-     */
-    playSound(name, opts = {}) {
-      const ctx = ensureCtx();
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const preset = presets[name] || base;
-      const o = { ...preset, ...opts };
-
-      const t0 = Math.max(now(), ctx.currentTime);
-
-      // Source
-      let sourceNode;
-      if (o.type === 'tone') {
-        const osc = ctx.createOscillator();
-        osc.type = o.wave || 'sine';
-        const baseFreq = o.frequency ?? 440;
-        const jitter = (o.freqRand ?? 0) * baseFreq;
-        const fStart = baseFreq + (Math.random() * 2 - 1) * jitter;
-        const fEnd = (o.frequencyEnd ?? fStart) + (Math.random() * 2 - 1) * jitter;
-
-        osc.frequency.setValueAtTime(Math.max(1, fStart), t0);
-        if (fEnd !== fStart) osc.frequency.linearRampToValueAtTime(Math.max(1, fEnd), t0 + (o.duration ?? 0.1));
-        if (o.detune) osc.detune.setValueAtTime(o.detune, t0);
-
-        sourceNode = osc;
-      } else {
-        if (!sharedNoise) sharedNoise = createNoiseBuffer(ctx);
-        const noise = ctx.createBufferSource();
-        noise.buffer = sharedNoise;
-        noise.loop = false;
-        sourceNode = noise;
-      }
-
-      // Envelope -> Filter -> Panner -> Master
-      const env = ctx.createGain();
-      env.gain.value = 0;
-      const filtered = applyFilter(ctx, env, o);
-      const panned = applyPanner(ctx, filtered, o.pan);
-      const chainEnd = panned || filtered || env;
-
-      chainEnd.connect(ctxState.master);
-      sourceNode.connect(env);
-
-      const { end } = scheduleADSR(env, t0, o);
-
-      // Start/stop
-      if (sourceNode.start) sourceNode.start(t0);
-      const stopAt = end + 0.01;
-      if (sourceNode.stop) sourceNode.stop(stopAt);
-
-      // For oscillators ensure disconnection after stop
-      sourceNode.onended = () => {
-        try { sourceNode.disconnect(); } catch {}
-        try { env.disconnect(); } catch {}
-        try { chainEnd.disconnect && chainEnd.disconnect(); } catch {}
-      };
-
-      return {
-        stop: () => {
-          const t = now();
-          env.gain.cancelScheduledValues(t);
-          env.gain.setTargetAtTime(0.0001, t, 0.01);
-          try { sourceNode.stop(t + 0.03); } catch {}
-        },
-        endedAt: stopAt
-      };
-    },
-
-    // Expose presets for tweaking or adding
-    presets,
-
-    // Master volume 0..1
-    setMasterVolume(v) {
-      ensureCtx();
-      ctxState.master.gain.value = clamp(v, 0, 1);
-    }
-  };
-})();
+    <img class="splashGif" src="docs/catchtail.gif" alt="Gameplay preview" />
 
 
+    <p>Time the hit when the moving dot overlaps the target ring. Rack up <b>50</b> precise hits.</p>
+    <button id="startBtn">Start</button>
+    <div class="muted" style="margin-top:8px;">Tip: Space/Click to hit • P to pause</div>
+  </div>
+</div>
+
+<!-- Profile Overlay -->
+<div class="overlay" id="profileOverlay" role="dialog" aria-modal="true">
+  <div class="card">
+    <h2>Your profile</h2>
+
+    <div id="profileAvatar">No photo</div>
+    <label for="avatarInput" class="avatarHint">Tap to upload / take photo</label>
+    <input id="avatarInput" type="file" accept="image/*" hidden>
+    <div class="row">
+      <div class="field">
+        <label for="nickname">Nickname</label>
+        <input id="nickname" placeholder="Your nickname" maxlength="32" />
+      </div>
+      <div class="field">
+        <label for="email">Email</label>
+        <input id="email" type="email" placeholder="name@example.com" />
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="profileCancel">Close</button>
+      <button class="btn" id="profileSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Results Overlay -->
+<div class="overlay" id="resultsOverlay" role="dialog" aria-modal="true">
+  <div class="card">
+    <h2>Recent results</h2>
+    <div id="resultsList"></div>
+    <div class="actions">
+      <button class="btn" id="resultsClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Global Leaderboard Overlay -->
+<div class="overlay" id="globalOverlay" role="dialog" aria-modal="true">
+  <div class="card">
+    <h2>Global leaderboard</h2>
+    <div id="globalList"></div>
+    <div class="actions">
+      <button class="btn" id="globalClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="footerScore" role="status" aria-live="polite"></div>
 
 
-
-
-
-(function () {
-
-
-
-// ======= CONFIG (easy to tweak) =========================================
-
-
-  const CONFIG = {
-
-      HITS_TARGET:      50,  // hits to win
-
-      CIRCLE_RADIUS_PX: 260, // main white circle radius (px)
-      DOT_RADIUS_PX:    60,  // player + target dot radius (px)
-      ORBIT_OFFSET_PX:  65,  // distance from circle edge to orbit path (px)
-      SPEED_RAD_S:      4, // angular speed (rad/s)
-      PRECISION_PERCENT: 95, // 100 = strict (edge-touch), 0 = very lenient
-      VANISH_SEC:       0.30, // target shrink animation duration (s)
-
-      // --- difficulty ---
-      DIFF_START: 0.20,   // starting difficulty (0 easy … 1 hard)
-      DIFF_END:   0.95,   // difficulty at the end of the run
-      SEP_EASY_DEG: 140,  // min angular separation at start (deg)
-      SEP_HARD_DEG:  22,  // min angular separation at end (deg)
-      AHEAD_BIAS:   0.65, // chance to spawn ahead of the player (with current dir)
-
-      RESTART_DELAY_MS: 600,
-
+<script>
+/* ================== ultra-small Web Audio SFX (unchanged) ================== */
+  const SFX = (() => {
+    const ctxState = { ctx: null, master: null };
+    const now = () => (ctxState.ctx ? ctxState.ctx.currentTime : 0);
+    const base = { type:'tone', wave:'sine', duration:0.08, attack:0.002, decay:0.06, sustain:0.0, release:0.04, volume:0.5, pan:0, frequency:880, frequencyEnd:null, detune:0, freqRand:0, filter:null };
+    const presets = {
+      pip:{...base,type:'tone',wave:'sine',attack:0.001,decay:0.06,sustain:0,release:0.03,duration:0.09,frequency:1200,freqRand:0.04,volume:0.4},
+      click:{...base,type:'noise',attack:0.001,decay:0.02,sustain:0,release:0.02,duration:0.03,filter:{type:'highpass',frequency:3000,Q:0.8},volume:0.35},
+      hit:{...base,type:'noise',attack:0.001,decay:0.12,sustain:0,release:0.06,duration:0.16,filter:{type:'bandpass',frequency:500,Q:2},freqRand:0.1,volume:0.5},
+      zong:{...base,type:'tone',attack:0.003,decay:0.5,sustain:0,release:0.25,duration:0.7,frequency:220,frequencyEnd:110,volume:0.45},
+      win:{...base,type:'tone',wave:'triangle',attack:0.005,decay:0.25,sustain:0.0,release:0.22,duration:0.5,frequency:520,frequencyEnd:1560,freqRand:0.02,filter:{type:'lowpass',frequency:3400,Q:0.7}},
     };
+    const ensureCtx = () => {
+      if (ctxState.ctx) return ctxState.ctx;
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const master = ctx.createGain(); master.gain.value = 0.9; master.connect(ctx.destination);
+      ctxState.ctx = ctx; ctxState.master = master; return ctx;
+    };
+    const createNoiseBuffer = (ctx) => { const length = 0.5 * ctx.sampleRate; const buffer = ctx.createBuffer(1, length, ctx.sampleRate); const data = buffer.getChannelData(0); for (let i=0;i<length;i++) data[i] = Math.random()*2-1; return buffer; };
+    let sharedNoise = null;
+    const scheduleADSR = (gainNode, t0, {attack,decay,sustain,release,duration,volume})=>{
+      const g=gainNode.gain, a=Math.min(Math.max(attack,0),2), d=Math.min(Math.max(decay,0),3), r=Math.min(Math.max(release??0,0),3);
+      const total = duration ?? (a+d+r || .1), sustainLevel = Math.min(Math.max(sustain??0,0),1);
+      g.cancelScheduledValues(t0); g.setValueAtTime(0.0001, t0);
+      g.linearRampToValueAtTime(volume, t0+a);
+      g.linearRampToValueAtTime(volume*sustainLevel, t0+a+d);
+      const relStart = Math.max(t0+a+d, t0+total-r);
+      g.setValueAtTime(g.value, relStart);
+      g.linearRampToValueAtTime(0.0001, relStart+r);
+      return { end: relStart + r };
+    };
+    const applyFilter = (ctx, src, opts)=>{ if (!opts.filter) return src; const {type,frequency,Q}=opts.filter; const biquad=ctx.createBiquadFilter(); biquad.type=type||'lowpass'; biquad.frequency.value=frequency??1000; biquad.Q.value=Q??0.0001; src.connect(biquad); return biquad; };
+    const applyPanner = (ctx, src, pan)=>{ if (pan==null) return src; const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null; if (!p) return src; p.pan.value = Math.min(Math.max(pan,-1),1); src.connect(p); return p; };
+    return {
+      init(){ const ctx = ensureCtx(); if (ctx.state === 'suspended') ctx.resume(); },
+      playSound(name, opts={}) {
+        const ctx = ensureCtx(); if (ctx.state === 'suspended') ctx.resume();
+        const o = { ...(presets[name] || base), ...opts };
+        const t0 = Math.max(now(), ctx.currentTime);
+        let sourceNode;
+        if (o.type === 'tone') {
+          const osc = ctx.createOscillator(); osc.type = o.wave || 'sine';
+          const baseFreq = o.frequency ?? 440, jitter = (o.freqRand ?? 0) * baseFreq;
+          const fStart = baseFreq + (Math.random()*2-1) * jitter;
+          const fEnd   = (o.frequencyEnd ?? fStart) + (Math.random()*2-1) * jitter;
+          osc.frequency.setValueAtTime(Math.max(1,fStart), t0);
+          if (fEnd !== fStart) osc.frequency.linearRampToValueAtTime(Math.max(1,fEnd), t0 + (o.duration ?? 0.1));
+          if (o.detune) osc.detune.setValueAtTime(o.detune, t0);
+          sourceNode = osc;
+        } else {
+          if (!sharedNoise) sharedNoise = createNoiseBuffer(ctx);
+          const noise = ctx.createBufferSource(); noise.buffer = sharedNoise; noise.loop = false; sourceNode = noise;
+        }
+        const env = ctx.createGain(); env.gain.value = 0;
+        const filtered = applyFilter(ctx, env, o);
+        const panned = applyPanner(ctx, filtered, o.pan);
+        const chainEnd = panned || filtered || env;
+        chainEnd.connect(ctxState.master); sourceNode.connect(env);
+        const { end } = scheduleADSR(env, t0, o);
+        if (sourceNode.start) sourceNode.start(t0);
+        const stopAt = end + 0.01; if (sourceNode.stop) sourceNode.stop(stopAt);
+        sourceNode.onended = ()=>{ try{sourceNode.disconnect();}catch{} try{env.disconnect();}catch{} try{chainEnd.disconnect && chainEnd.disconnect();}catch{} };
+        return { stop: ()=>{ const t=now(); env.gain.cancelScheduledValues(t); env.gain.setTargetAtTime(0.0001,t,0.01); try{sourceNode.stop(t+0.03);}catch{} }, endedAt: stopAt };
+      },
+      presets,
+      setMasterVolume(v){ const ctx = ensureCtx(); ctxState.master.gain.value = Math.min(Math.max(v,0),1); }
+    };
+  })();
+
+/* ================== IndexedDB (profile + results) ================== */
+  const IDB_NAME = 'rainbow-orbit';
+  const IDB_VER  = 1;
+  let idbPromise = null;
+
+  function idbOpen(){
+    if (idbPromise) return idbPromise;
+    idbPromise = new Promise((resolve, reject)=>{
+      const req = indexedDB.open(IDB_NAME, IDB_VER);
+      req.onupgradeneeded = ()=>{
+        const db = req.result;
+      if (!db.objectStoreNames.contains('profile')) db.createObjectStore('profile'); // single key "data"
+      if (!db.objectStoreNames.contains('results')) {
+        const store = db.createObjectStore('results', { keyPath: 'id', autoIncrement: true });
+        store.createIndex('byScore', 'hitsMade');
+      }
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+    return idbPromise;
+  }
+  async function idbGet(store, key){ const db = await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readonly'); const st=tx.objectStore(store); const r=st.get(key); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+  async function idbSet(store, key, value){ const db = await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); const st=tx.objectStore(store); const r=st.put(value, key); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); }); }
+  async function idbAdd(store, value){ const db = await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readwrite'); const st=tx.objectStore(store); const r=st.add(value); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+  async function idbGetAll(store){ const db = await idbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(store,'readonly'); const st=tx.objectStore(store); const r=st.getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); }); }
+
+  function getClientId(){
+    let cid = localStorage.getItem('clientId');
+    if (!cid){
+      cid = (crypto?.randomUUID?.() || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+      localStorage.setItem('clientId', cid);
+    }
+    return cid;
+  }
+
+/* ================== Tokens module (no globals) ================== */
+
+  const Tokens = (() => {
+    let token = null;
+    let expMs = 0;
+
+    async function get(email){
+      const res = await fetch('/api/submit_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: getClientId(), email: (email||'').trim().toLowerCase() })
+      });
+      const data = await res.json();
+      if (data.status !== 'ok') {
+        if (data.code === 'email_taken') {
+          throw Object.assign(new Error('email taken'), { code: 'email_taken' });
+        }
+        throw new Error(data.message || 'token error');
+      }
+      token = data.token;
+      expMs = data.exp * 1000;
+      return token;
+    }
 
 
-    // =======================================================================
+    async function ensure(){
+      const prof = await idbGet('profile','data') || {};
+      if (!token || Date.now() >= (expMs - 30_000)){
+        await get((prof.email || '').trim().toLowerCase());
+      }
+      return token;
+    }
 
-    const canvas = document.getElementById('glcanvas');
-    const gl = canvas.getContext('webgl2', {
-      alpha: false, antialias: false, desynchronized: true,
-      powerPreference: 'high-performance', preserveDrawingBuffer: false
-    });
-    if (!gl) {
-      document.body.innerHTML = '<p style="color:white;padding:1rem;font:16px system-ui">WebGL2 not supported.</p>';
+    return { get, ensure };
+  })();
+
+
+  function escapeHTML(s){
+    return String(s).replace(/[&<>"']/g, m => (
+      m === '&' ? '&amp;' :
+      m === '<' ? '&lt;'  :
+      m === '>' ? '&gt;'  :
+      m === '"' ? '&quot;': '&#39;'
+      ));
+  }
+
+
+
+
+/* ================== DOM refs for social UI ================== */
+  const avatarBtn = document.getElementById('avatarBtn');
+  const resultsBtn = document.getElementById('resultsBtn');
+
+  const profileOverlay = document.getElementById('profileOverlay');
+  const profileAvatar  = document.getElementById('profileAvatar');
+  const avatarInput    = document.getElementById('avatarInput');
+  const nicknameInput  = document.getElementById('nickname');
+  const emailInput     = document.getElementById('email');
+  const profileCancel  = document.getElementById('profileCancel');
+  const profileSave    = document.getElementById('profileSave');
+
+  const resultsOverlay = document.getElementById('resultsOverlay');
+  const resultsList    = document.getElementById('resultsList');
+  const resultsClose   = document.getElementById('resultsClose');
+
+  const splash         = document.getElementById('splash');
+  const startBtn       = document.getElementById('startBtn');
+  const pausedBadge    = document.getElementById('pausedBadge');
+
+  let avatarBlobPreviewURL = null;
+  let currentProfile = { nickname:'', email:'', avatarBlob:null };
+
+
+
+  const avatarWrap   = document.getElementById('avatarWrap');
+  const nickChip     = document.getElementById('nickChip');
+  const footerScore  = document.getElementById('footerScore');
+
+  function setNickChip(name){
+    const nick = (name || '').trim();
+    if (nick) {
+      nickChip.textContent = nick;
+      nickChip.style.display = 'block';
+    } else {
+      nickChip.textContent = '';
+      nickChip.style.display = 'none';
+    }
+  }
+
+  async function fetchMyGlobalScore(){
+    const prof = await idbGet('profile','data').catch(()=>null);
+    const cid  = getClientId();
+
+  // Try the dedicated /me with identifiers
+    try{
+      const qs = new URLSearchParams();
+      if (prof && prof.email) qs.set('email', String(prof.email).trim().toLowerCase());
+      if (cid) qs.set('clientId', cid);
+      const res = await fetch(`/api/leaderboard/me?${qs.toString()}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.status === 'ok' && data.item) return data.item;
+      if (data && data.status === 'ok' && data.item === null) return null; // not ranked yet
+    } else {
+      console.warn('GET /api/leaderboard/me failed', res.status);
+    }
+  }catch(err){
+    console.warn('fetchMyGlobalScore(/me) error', err);
+  }
+
+  // Fallback: just show top 100; if we're not in it, treat as unranked.
+  try{
+    const res = await fetch('/api/leaderboard?limit=100', { credentials: 'include' });
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    const items = (data && data.status === 'ok') ? (data.items || []) : [];
+    // We can't match reliably here (no user_key in public list), so we just return null.
+    return null;
+  }catch(err){
+    console.warn('fetchMyGlobalScore(list) failed', err);
+    return null;
+  }
+}
+
+
+
+async function updateFooterScore(){
+  // Current display name (fallback to "Player")
+  const name = (currentProfile && currentProfile.nickname ? String(currentProfile.nickname) : 'Player').trim() || 'Player';
+  const hasEmail = !!(currentProfile && currentProfile.email && String(currentProfile.email).trim());
+
+  // Initial optimistic text while loading
+  footerScore.textContent = `${name}: …`;
+
+  try {
+    const item = await fetchMyGlobalScore();
+
+    if (item && typeof item === 'object') {
+      const nick = name || (item.nickname || 'Player');
+      const hits = (item.hitsMade != null && item.target != null) ? `${item.hitsMade}/${item.target}` : '';
+      const prec = (item.avgPrecision != null) ? `${item.avgPrecision}%` : '';
+      const rank = (item.rank != null) ? ` #${item.rank}` : '';
+
+      const parts = [hits, prec].filter(Boolean).join(' • ');
+      footerScore.textContent = parts ? `${nick}: ${parts}${rank}` : `${nick}${rank}`;
       return;
     }
 
-    // === Shaders ============================================================
-    const VS = `#version 300 es
-    precision highp float;
-    layout(location=0) in vec2 aPos;
-    out vec2 vUV;
-    void main(){
-      vUV = aPos*0.5 + 0.5;
-      gl_Position = vec4(aPos,0.0,1.0);
-  }`;
+    // No match found (not ranked yet or not returned by API)
+    footerScore.textContent = hasEmail ? `${name}: unranked` : `${name}: set email in Profile`;
+  } catch (err) {
+    console.warn('updateFooterScore failed', err);
+    footerScore.textContent = `${name}: —`;
+  }
+}
 
-    // uTargetScale animates shrinking; uTargetColor gives each target a random color
-  const FS = `#version 300 es
-    precision highp float;
-    out vec4 fragColor;
-    in vec2 vUV;
 
-    uniform vec2  uResolution;
-    uniform float uTime;
 
-    uniform float uCirclePx;
-    uniform float uDotPx;
-    uniform float uOffsetPx;
 
-    uniform float uTheta;
-    uniform float uTargetTheta;
-    uniform float uTargetScale;  // 1..0
-    uniform vec3  uTargetColor;  // RGB color for current/vanishing target
+/* ================== Helpers (UI) ================== */
+function openOverlay(el){
+  el.classList.add('open');
+  document.body.classList.add('ui-paused');
+}
+function closeOverlay(el){
+  el.classList.remove('open');
+  const anyOpen = !!document.querySelector('.overlay.open');
+  if (!anyOpen) document.body.classList.remove('ui-paused');
+  const showBadge = document.body.classList.contains('user-paused') || anyOpen;
+  pausedBadge.classList.toggle('show', showBadge);
+}
+function setAvatarButtonFromBlob(blob){
+  avatarBtn.innerHTML = '';
+  if (blob) {
+    const img = document.createElement('img');
+    img.alt = 'Avatar';
+    img.src = URL.createObjectURL(blob);
+    avatarBtn.appendChild(img);
+  } else {
+    const ph = document.createElement('div');
+    ph.className = 'placeholder';
+    ph.textContent = '🙂';
+    avatarBtn.appendChild(ph);
+  }
+}
+function setProfilePreviewFromBlob(blob){
+  if (avatarBlobPreviewURL) { URL.revokeObjectURL(avatarBlobPreviewURL); avatarBlobPreviewURL = null; }
+  profileAvatar.style.backgroundImage = '';
+  profileAvatar.textContent = 'No photo';
+  if (blob) {
+    avatarBlobPreviewURL = URL.createObjectURL(blob);
+    profileAvatar.style.backgroundImage = `url(${avatarBlobPreviewURL})`;
+    profileAvatar.textContent = '';
+  }
+}
 
-    vec3 hsv2rgb(vec3 c){
-      vec3 p = abs(fract(c.xxx + vec3(0., 2./3., 1./3.)) * 6. - 3.);
-      vec3 rgb = clamp(p - 1., 0., 1.);
-      return c.z * mix(vec3(1.), rgb, c.y);
+/* ================== Load profile on boot ================== */
+/* ================== Load profile on boot ================== */
+(async function initProfileUI(){
+  try {
+    const saved = await idbGet('profile', 'data');
+
+    if (saved && typeof saved === 'object') {
+      // merge with defaults to avoid undefined fields
+      currentProfile = { nickname:'', email:'', avatarBlob:null, ...saved };
+
+      setAvatarButtonFromBlob(currentProfile.avatarBlob || null);
+      setProfilePreviewFromBlob(currentProfile.avatarBlob || null);
+
+      nicknameInput.value = currentProfile.nickname || '';
+      emailInput.value    = currentProfile.email || '';
+
+      setNickChip(currentProfile.nickname || '');
+    } else {
+      currentProfile = { nickname:'', email:'', avatarBlob:null };
+
+      setAvatarButtonFromBlob(null);
+      setProfilePreviewFromBlob(null);
+
+      nicknameInput.value = '';
+      emailInput.value    = '';
+
+      setNickChip('');
+    }
+  } catch (e) {
+    console.warn('Profile load failed', e);
+
+    currentProfile = { nickname:'', email:'', avatarBlob:null };
+
+    setAvatarButtonFromBlob(null);
+    setProfilePreviewFromBlob(null);
+
+    nicknameInput.value = '';
+    emailInput.value    = '';
+
+    setNickChip('');
+  } finally {
+    // update bottom "username: global score"
+    updateFooterScore();
+  }
+})();
+
+
+/* ================== Wire UI events ================== */
+avatarBtn.addEventListener('click', ()=>{ openOverlay(profileOverlay); });
+profileCancel.addEventListener('click', ()=> closeOverlay(profileOverlay));
+profileAvatar.addEventListener('click', ()=> avatarInput.click());
+avatarInput.addEventListener('change', ()=>{
+  const file = avatarInput.files && avatarInput.files[0];
+  if (file) { currentProfile.avatarBlob = file; setProfilePreviewFromBlob(file); }
+});
+
+
+profileSave.addEventListener('click', async () => {
+  currentProfile.nickname = (nicknameInput.value || '').trim();
+  currentProfile.email    = (emailInput.value || '').trim();
+
+  try {
+    await Tokens.get((currentProfile.email || '').toLowerCase());
+  } catch (e) {
+    if (e && e.code === 'email_taken') {
+      alert('That email is already registered. Please use a different email address.');
+      emailInput.focus();
+      return;
+    }
+    console.warn('Token prefetch failed', e);
+    return;
+  }
+
+  await idbSet('profile', 'data', currentProfile);
+
+  setAvatarButtonFromBlob(currentProfile.avatarBlob || null);
+  setProfilePreviewFromBlob(currentProfile.avatarBlob || null);
+
+  setNickChip(currentProfile.nickname || '');
+  updateFooterScore();
+
+  closeOverlay(profileOverlay);
+  SFX.playSound('click');
+});
+
+
+
+resultsBtn.addEventListener('click', async ()=>{
+  await refreshResultsUI();
+  openOverlay(resultsOverlay);
+});
+resultsClose.addEventListener('click', ()=> closeOverlay(resultsOverlay));
+resultsOverlay.addEventListener('click', (e)=>{ if (e.target === resultsOverlay) closeOverlay(resultsOverlay); });
+profileOverlay.addEventListener('click', (e)=>{ if (e.target === profileOverlay) closeOverlay(profileOverlay); });
+
+/* ================== Global leaderboard UI ================== */
+const globalBtn     = document.getElementById('globalBtn');
+const globalOverlay = document.getElementById('globalOverlay');
+const globalList    = document.getElementById('globalList');
+const globalClose   = document.getElementById('globalClose');
+
+async function refreshGlobalUI(){
+  globalList.innerHTML = '<div class="muted" style="padding:10px 8px;">Loading…</div>';
+
+  try{
+    const res = await fetch('/api/leaderboard?limit=10');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data  = await res.json();
+    const items = (data && data.status === 'ok') ? (data.items || []) : [];
+
+    if (!items.length){
+      globalList.innerHTML = '<div class="muted" style="padding:10px 8px;">No global results yet.</div>';
+      return;
     }
 
-    void main(){
-      float pixel = 1.0 / max(uResolution.y, 1.0);
+    const myNick = (currentProfile && currentProfile.nickname ? String(currentProfile.nickname) : '')
+    .trim()
+    .toLowerCase();
 
-      vec2 centered = vUV - 0.5;
-      float aspect = uResolution.x / max(uResolution.y, 1.0);
-      vec2 p = vec2(centered.x * aspect, centered.y);
+    globalList.innerHTML = '';
 
-      float ang = atan(p.y,p.x);
-      float hue = fract(ang / 6.28318530718 + 0.5 + uTime * 0.05 + vUV.x * 0.15);
-      vec3 bg = hsv2rgb(vec3(hue, 1.0, 1.0));
+    items.forEach(it=>{
+      const row   = document.createElement('div'); row.className = 'resultItem';
+      const badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = `#${it.rank}`;
 
-      float r       = uCirclePx  * pixel;
-      float offsetN = uOffsetPx  * pixel;
-      float dotR    = uDotPx     * pixel;
-      float orbitR  = r + offsetN;
+      const theirNick = (it.nickname || 'Player');
+      const isMe = myNick && theirNick.trim().toLowerCase() === myNick;
 
-      // White central circle
-      float d = length(p);
-      float w = fwidth(d) * 1.5;          // ~1.5 pixels of antialias
-      float edge = smoothstep(r, r - w, d);
-      vec3 color = mix(vec3(1.0), bg, edge);
+      const nickHTML = isMe
+      ? `<span class="rainbowText">${escapeHTML(theirNick)}</span>`
+      : escapeHTML(theirNick);
 
-      // Target with animated scale; keep its color during vanish
-      float tR    = dotR * max(uTargetScale, 0.0);
-      vec2  tC    = vec2(cos(uTargetTheta), sin(uTargetTheta)) * orbitR;
-      float dT    = length(p - tC);
-      float tMask = 1.0 - smoothstep(tR, tR + 1.5*pixel, dT);
-      // Fade the influence slightly with scale but keep hue (no black flash)
-      float tint = mix(0.0, 1.0, max(uTargetScale, 0.0));
-      color = mix(color, uTargetColor, tMask * tint);
+      const mid = document.createElement('div');
+      mid.innerHTML =
+      `<div class="sub">${nickHTML}</div>
+      <div class="muted">${it.hitsMade}/${it.target} • ${it.avgPrecision}% • ${new Date(it.date).toLocaleString()}</div>`;
 
-      // Player (black)
-      vec2  pC    = vec2(cos(uTheta), sin(uTheta)) * orbitR;
-      float dP    = length(p - pC);
-      float pMask = 1.0 - smoothstep(dotR, dotR + 1.5*pixel, dP);
-      color = mix(color, vec3(0.0), pMask);
+      const right = document.createElement('div'); right.className = 'muted'; right.textContent = it.outcome || '';
 
-      fragColor = vec4(color,1.0);
+      row.appendChild(badge);
+      row.appendChild(mid);
+      row.appendChild(right);
+      globalList.appendChild(row);
+    });
+
+  }catch(e){
+    globalList.innerHTML = '<div class="muted" style="padding:10px 8px;">Leaderboard endpoint not found or failed.</div>';
+    console.warn('Global leaderboard error', e);
+  }
+}
+
+
+
+globalBtn.addEventListener('click', async ()=>{ await refreshGlobalUI(); openOverlay(globalOverlay); });
+globalClose.addEventListener('click', ()=> closeOverlay(globalOverlay));
+globalOverlay.addEventListener('click', (e)=>{ if (e.target === globalOverlay) closeOverlay(globalOverlay); });
+
+async function hasLocalProfile(){
+  try{
+    const saved = await idbGet('profile', 'data');
+    return !!(saved && saved.nickname && saved.email);
+  }catch{ return false; }
+}
+
+async function refreshResultsUI(){
+  const items = await idbGetAll('results');
+  items.sort((a,b)=>{
+    if (b.hitsMade !== a.hitsMade) return b.hitsMade - a.hitsMade;
+    if (b.avgPrecision !== a.avgPrecision) return b.avgPrecision - a.avgPrecision;
+    return (b.date||0) - (a.date||0);
+  });
+  const last10 = items.slice(0,10);
+  resultsList.innerHTML = '';
+  if (!last10.length){
+    resultsList.innerHTML = '<div class="muted" style="padding:10px 8px;">No results yet. Play a round!</div>';
+  } else {
+    last10.forEach(r=>{
+      const row = document.createElement('div'); row.className = 'resultItem';
+      const badge = document.createElement('div'); badge.className = 'badge'; badge.textContent = `${r.hitsMade}/${r.target}`;
+      const mid   = document.createElement('div'); mid.innerHTML = `<div class="sub">${r.avgPrecision}% precision</div><div class="muted">${new Date(r.date).toLocaleString()}</div>`;
+      const right = document.createElement('div'); right.className = 'muted'; right.textContent = r.outcome || '';
+      row.appendChild(badge); row.appendChild(mid); row.appendChild(right);
+      resultsList.appendChild(row);
+    });
+  }
+}
+
+/* ================== GAME ================== */
+(function () {
+  // ======= CONFIG =========================================
+  const CONFIG = {
+    HITS_TARGET: 50,
+    CIRCLE_RADIUS_PX: 255,
+    DOT_RADIUS_PX: 60,
+    ORBIT_OFFSET_PX: 65,
+    SPEED_RAD_S: 4,
+    PRECISION_PERCENT: 95,
+    VANISH_SEC: 0.30,
+    DIFF_START: 0.20,
+    DIFF_END: 0.95,
+    SEP_EASY_DEG: 140,
+    SEP_HARD_DEG: 22,
+    AHEAD_BIAS: 0.65,
+    RESTART_DELAY_MS: 600,
+    START_DELAY_MS: 450
+  };
+
+  const canvas = document.getElementById('glcanvas');
+  const gl = canvas.getContext('webgl2', { alpha:false, antialias:false, desynchronized:true, powerPreference:'high-performance', preserveDrawingBuffer:false });
+  if (!gl) { document.body.innerHTML = '<p style="color:white;padding:1rem;font:16px system-ui">WebGL2 not supported.</p>'; return; }
+
+  // --- Start/Pause state ---
+  const centerCountEl = document.getElementById('centerCount');
+  const statsEl = document.getElementById('stats');
+  const lastHitEl = document.getElementById('lastHit');
+
+  let started = false;
+  let paused = true;        // paused until splash start
+  let userPaused = false;   // remembers manual pause
+
+  function setPause(p, { user=false } = {}){
+    paused = !!p;
+    if (user) userPaused = paused;
+    document.body.classList.toggle('user-paused', userPaused);
+    const overlayPaused = document.body.classList.contains('ui-paused');
+    pausedBadge.classList.toggle('show', paused || overlayPaused);
+  }
+  function togglePause(){ setPause(!paused, { user:true }); }
+
+  // --- Shaders ---
+  const VS = `#version 300 es
+  precision highp float; layout(location=0) in vec2 aPos; out vec2 vUV;
+  void main(){ vUV = aPos*0.5 + 0.5; gl_Position = vec4(aPos,0.0,1.0); }`;
+
+  const FS = `#version 300 es
+  precision highp float; out vec4 fragColor; in vec2 vUV;
+  uniform vec2 uResolution; uniform float uTime;
+  uniform float uCirclePx; uniform float uDotPx; uniform float uOffsetPx;
+  uniform float uTheta; uniform float uTargetTheta; uniform float uTargetScale; uniform vec3 uTargetColor;
+  vec3 hsv2rgb(vec3 c){ vec3 p = abs(fract(c.xxx + vec3(0., 2./3., 1./3.))*6.-3.); vec3 rgb=clamp(p-1.,0.,1.); return c.z * mix(vec3(1.), rgb, c.y); }
+  void main(){
+    float pixel = 1.0 / max(uResolution.y, 1.0);
+    vec2 centered = vUV - 0.5; float aspect = uResolution.x / max(uResolution.y, 1.0);
+    vec2 p = vec2(centered.x * aspect, centered.y);
+    float ang = atan(p.y,p.x);
+    float hue = fract(ang / 6.28318530718 + 0.5 + uTime * 0.05 + vUV.x * 0.15);
+    vec3 bg = hsv2rgb(vec3(hue, 1.0, 1.0));
+    float r = uCirclePx * pixel; float offsetN = uOffsetPx * pixel; float dotR = uDotPx * pixel; float orbitR = r + offsetN;
+    float d = length(p);
+    float w = fwidth(d) * 1.5;
+    float edge = smoothstep(r, r - w, d);
+    vec3 color = mix(vec3(1.0), bg, edge);
+    float tR = dotR * max(uTargetScale, 0.0); vec2 tC = vec2(cos(uTargetTheta), sin(uTargetTheta)) * orbitR;
+    float dT = length(p - tC); float tMask = 1.0 - smoothstep(tR, tR + 1.5*pixel, dT);
+    float tint = mix(0.0, 1.0, max(uTargetScale, 0.0)); color = mix(color, uTargetColor, tMask * tint);
+    vec2 pC = vec2(cos(uTheta), sin(uTheta)) * orbitR; float dP = length(p - pC);
+    float pMask = 1.0 - smoothstep(dotR, dotR + 1.5*pixel, dP); color = mix(color, vec3(0.0), pMask);
+    fragColor = vec4(color,1.0);
 }`;
 
-function createShader(type, src) {
-  const sh = gl.createShader(type);
-  gl.shaderSource(sh, src);
-  gl.compileShader(sh);
-  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-    console.error(gl.getShaderInfoLog(sh));
-    throw new Error('Shader compile error');
-  }
-  return sh;
-}
-function createProgram(vsSrc, fsSrc) {
-  const vs = createShader(gl.VERTEX_SHADER, vsSrc);
-  const fs = createShader(gl.FRAGMENT_SHADER, fsSrc);
-  const prog = gl.createProgram();
-  gl.attachShader(prog, vs);
-  gl.attachShader(prog, fs);
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-    console.error(gl.getProgramInfoLog(prog));
-    throw new Error('Program link error');
-  }
-  gl.deleteShader(vs); gl.deleteShader(fs);
-  return prog;
-}
+function createShader(type, src){ const sh=gl.createShader(type); gl.shaderSource(sh,src); gl.compileShader(sh); if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){ console.error(gl.getShaderInfoLog(sh)); throw new Error('Shader compile error'); } return sh; }
+function createProgram(vsSrc, fsSrc){ const vs=createShader(gl.VERTEX_SHADER,vsSrc); const fs=createShader(gl.FRAGMENT_SHADER,fsSrc); const prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog); if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){ console.error(gl.getProgramInfoLog(prog)); throw new Error('Program link error'); } gl.deleteShader(vs); gl.deleteShader(fs); return prog; }
+const program = createProgram(VS, FS); gl.useProgram(program);
 
-const program = createProgram(VS, FS);
-gl.useProgram(program);
-
-    // Fullscreen triangle
-const vao = gl.createVertexArray();
-gl.bindVertexArray(vao);
-const vbo = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
-gl.enableVertexAttribArray(0);
-gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
 
-    // Uniforms
-const uResolution   = gl.getUniformLocation(program, 'uResolution');
-const uTime         = gl.getUniformLocation(program, 'uTime');
-const uCirclePx     = gl.getUniformLocation(program, 'uCirclePx');
-const uDotPx        = gl.getUniformLocation(program, 'uDotPx');
-const uOffsetPx     = gl.getUniformLocation(program, 'uOffsetPx');
-const uTheta        = gl.getUniformLocation(program, 'uTheta');
-const uTargetTheta  = gl.getUniformLocation(program, 'uTargetTheta');
-const uTargetScale  = gl.getUniformLocation(program, 'uTargetScale');
-const uTargetColor  = gl.getUniformLocation(program, 'uTargetColor');
+const uResolution = gl.getUniformLocation(program,'uResolution');
+const uTime = gl.getUniformLocation(program,'uTime');
+const uCirclePx = gl.getUniformLocation(program,'uCirclePx');
+const uDotPx = gl.getUniformLocation(program,'uDotPx');
+const uOffsetPx = gl.getUniformLocation(program,'uOffsetPx');
+const uTheta = gl.getUniformLocation(program,'uTheta');
+const uTargetTheta = gl.getUniformLocation(program,'uTargetTheta');
+const uTargetScale = gl.getUniformLocation(program,'uTargetScale');
+const uTargetColor = gl.getUniformLocation(program,'uTargetColor');
 
-    // ----- Game state -----
-const centerCountEl = document.getElementById('centerCount');
-
-const statsEl = document.getElementById('stats');
-let hitsMade = 0;
-let precisionSum = 0; // sum of hit precision in [0..1]
-
+let hitsMade = 0, precisionSum = 0;
 function hideStats(){ statsEl.textContent = ''; }
-function showStats(){
+
+async function showStats(){
   const avg = hitsMade ? Math.round((precisionSum / hitsMade) * 100) : 0;
-  statsEl.textContent = `${hitsMade}/${CONFIG.HITS_TARGET} hit\r\n${avg}% precision`;
+  let text = `${hitsMade}/${CONFIG.HITS_TARGET} hit\r\n${avg}% precision`;
+  try {
+    const items = await idbGetAll('results');
+    const candidate = { hitsMade, avgPrecision: avg };
+    let better = 0;
+    for (const r of items) {
+      if (r.hitsMade > candidate.hitsMade) better++;
+      else if (r.hitsMade === candidate.hitsMade && r.avgPrecision > candidate.avgPrecision) better++;
+    }
+    const rank = better + 1;
+    text += `\r\nscore: ${rank}`;
+    if (rank === 1) text += ` — Highest!`;
+  } catch {}
+  statsEl.textContent = text;
 }
 
-const lastHitEl = document.getElementById('lastHit');
 let lastHitTimer = null;
-
 function showLastHitPrecision(p){
   const pct = Math.round(p * 100);
   lastHitEl.textContent = `precision ${pct}%`;
   clearTimeout(lastHitTimer);
-  lastHitEl.style.opacity = '1';            // show
-  lastHitTimer = setTimeout(() => {
-    lastHitEl.style.opacity = '0';          // fade out after 700ms
-  }, 700);
+  lastHitEl.style.opacity = '1';
+  lastHitTimer = setTimeout(()=>{ lastHitEl.style.opacity = '0'; }, 700);
+}
+
+let start = performance.now(), prev = start;
+let dir = 1.0, speed = CONFIG.SPEED_RAD_S, theta = Math.PI * 0.5;
+let circlePx = CONFIG.CIRCLE_RADIUS_PX, dotPx = CONFIG.DOT_RADIUS_PX, offsetPx = CONFIG.ORBIT_OFFSET_PX;
+let targetTheta = (theta + Math.PI) % (Math.PI * 2);
+
+let hitsToGo = CONFIG.HITS_TARGET, gameOver = false, won = false;
+let roundStartMs = null; 
+let deltaPrev = null, inBandPrev = false, armedAfterCross = false;
+
+
+let vanishing = false, vanishT = 0;
+let targetColor = randRGB(), vanishColor = targetColor.slice();
+let restartLockUntil = 0;
+let savedThisRun = false;
+
+function randRGB(){
+  const h=Math.random(); const s=0.7+Math.random()*0.3; const v=0.9;
+  const i=Math.floor(h*6); const f=h*6 - i;
+  const p=v*(1-s), q=v*(1-f*s), t=v*(1-(1-f)*s); let r=0,g=0,b=0;
+  switch(i%6){ case 0:r=v;g=t;b=p;break; case 1:r=q;g=v;b=p;break; case 2:r=p;g=v;b=t;break; case 3:r=p;g=q;b=v;break; case 4:r=t;g=p;b=v;break; case 5:r=v;g=p;b=q;break; }
+  return [r,g,b];
+}
+const TAU = Math.PI * 2, lerp=(a,b,t)=>a+(b-a)*t, wrapTau=(a)=>((a%TAU)+TAU)%TAU;
+function progress(){ return 1 - (hitsToGo / CONFIG.HITS_TARGET); }
+function currentDifficulty(){ return lerp(CONFIG.DIFF_START, CONFIG.DIFF_END, progress()); }
+function pickTargetNear(playerTheta, dirSign){
+  const diff=currentDifficulty(), minSepDeg=lerp(CONFIG.SEP_EASY_DEG, CONFIG.SEP_HARD_DEG, diff);
+  const minSep=minSepDeg*Math.PI/180, maxSep=Math.max(minSep*1.6, minSep+0.15);
+  const t=Math.random(); const sep=lerp(maxSep, minSep, t*t);
+  const ahead = Math.random() < CONFIG.AHEAD_BIAS ? 1 : -1;
+  const sign = ahead * Math.sign(dirSign || 1);
+  return wrapTau(playerTheta + sign*sep);
+}
+function updateCenterLabel(){
+  centerCountEl.classList.remove('win','lose');
+  if (!started) { centerCountEl.textContent = 'Ready?'; }
+  else if (gameOver && !won) { centerCountEl.textContent = 'GAME OVER'; centerCountEl.classList.add('lose'); }
+  else if (won) { centerCountEl.textContent = 'YOU WIN!'; centerCountEl.classList.add('win'); }
+  else { centerCountEl.textContent = String(hitsToGo); }
+}
+updateCenterLabel();
+
+function resize(){
+  const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+  // Use the actual on-screen CSS size of the canvas
+  const cssW = Math.round(canvas.clientWidth);
+  const cssH = Math.round(canvas.clientHeight);
+
+  const bufW = Math.round(cssW * dpr);
+  const bufH = Math.round(cssH * dpr);
+
+  if (canvas.width !== bufW || canvas.height !== bufH) {
+    canvas.width  = bufW;
+    canvas.height = bufH;
+    gl.viewport(0, 0, bufW, bufH);
+  }
+}
+window.addEventListener('resize', resize, { passive:true });
+window.addEventListener('orientationchange', resize, { passive:true });
+
+// iOS toolbars/zoom change the visual viewport without firing a normal resize
+if (window.visualViewport){
+  visualViewport.addEventListener('resize', resize, { passive:true });
+  visualViewport.addEventListener('scroll',  resize, { passive:true }); // address bar slide
+}
+resize();
+
+
+function baseAngularContact(orbitR_px){ const clamped = Math.max(0, Math.min(1, dotPx / Math.max(orbitR_px,1))); return 2 * Math.asin(clamped); }
+function tolRadians(){ const orbitR_px = circlePx + offsetPx; const base = baseAngularContact(orbitR_px); return base * (200 - CONFIG.PRECISION_PERCENT) / 100; }
+
+function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)); }
+function lockRestart(){ restartLockUntil = performance.now() + CONFIG.RESTART_DELAY_MS; }
+function canRestart(){ return performance.now() >= restartLockUntil; }
+
+async function saveResult(outcome){
+  // Prevent double saves for a single round
+  if (savedThisRun) return;
+  savedThisRun = true;
+
+  // Compute round stats
+  const avg = hitsMade ? Math.round((precisionSum / hitsMade) * 100) : 0;
+  const elapsedMs = Math.round(performance.now() - (roundStartMs ?? performance.now()));
+
+  // Local record (always save locally)
+  const rec = {
+    date: Date.now(),
+    hitsMade,
+    target: CONFIG.HITS_TARGET,
+    avgPrecision: avg,
+    outcome,
+    durationMs: elapsedMs
+  };
+
+  try {
+    await idbAdd('results', rec);
+  } catch (err) {
+    console.warn('Save local failed', err);
+  }
+
+  // Submit to global board only if we have a local profile with nickname + email
+  try {
+    const prof = await idbGet('profile', 'data');
+    if (prof && prof.nickname && prof.email) {
+      const basePayload = {
+        nickname: prof.nickname,
+        email: prof.email,
+        clientId: getClientId(),
+        hitsMade: rec.hitsMade,
+        target:  rec.target,
+        avgPrecision: rec.avgPrecision,
+        outcome: rec.outcome,
+        date:    rec.date,
+        durationMs: rec.durationMs
+      };
+
+      // Ensure a valid token
+      const token0 = await Tokens.ensure();
+      let payload = { ...basePayload, token: token0 };
+
+      const send = async (body) => fetch('/api/submit_result_public', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Client-Id': getClientId()
+        },
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+
+      // First attempt
+      let res = await send(payload);
+
+      // If token conflict/expired, refresh token and retry once
+      if (res.status === 401 || res.status === 409) {
+        const token1 = await Tokens.get(prof.email || '');
+        payload = { ...basePayload, token: token1 };
+        res = await send(payload);
+      }
+
+      if (!res.ok) {
+        const txt = await res.text().catch(()=> '');
+        console.warn('Global submit failed', res.status, txt);
+      }
+    }
+  } catch (err) {
+    console.warn('Global submit error', err);
+  }
+
+  // Finally, refresh footer so the user sees their current standing ASAP
+  try {
+    await updateFooterScore();
+  } catch (err) {
+    console.warn('Footer refresh after save failed', err);
+  }
 }
 
 
+function frame(tMs){
 
-let start   = performance.now();
-let prev    = start;
-
-let dir      = 1.0;
-let speed    = CONFIG.SPEED_RAD_S;
-let theta    = Math.PI * 0.5;
-let circlePx = CONFIG.CIRCLE_RADIUS_PX;
-let dotPx    = CONFIG.DOT_RADIUS_PX;
-let offsetPx = CONFIG.ORBIT_OFFSET_PX;
-
-//let targetTheta = randAngle();
-let targetTheta = (theta + Math.PI) % (Math.PI * 2); // spawn ~180° from start
+  const dt = Math.max(0, (tMs - prev) * 0.001); prev = tMs;
+  const time = (tMs - start) * 0.001;
+  document.documentElement.style.setProperty('--rainbow-rot', `${(time * 0.05) % 1}turn`);
 
 
-let hitsToGo = CONFIG.HITS_TARGET;
-let gameOver = false;
-let won      = false;
+    // Game logic only when started and not paused
+  const overlayPaused = document.body.classList.contains('ui-paused');
+  if (started && !paused && !overlayPaused && !gameOver && !won) {
+    speed = CONFIG.SPEED_RAD_S * (1 + 0.30 * currentDifficulty());
+    theta += dir * speed * dt;
 
-    // Miss / crossing detection (ignores 180° opposite wrap)
-    let deltaPrev   = null; // last delta (-π..π]
-    let inBandPrev  = false;
-    let armedAfterCross = false;
-
-    // Vanish animation state
-    let vanishing = false;
-    let vanishT   = 0; // seconds since hit
-    let targetColor = randRGB();       // current target color
-    let vanishColor = targetColor.slice(); // frozen color during vanish
-    let restartLockUntil = 0; // timestamp until which restarts are ignored
-
-
-    function randAngle() { return Math.random() * Math.PI * 2; }
-    function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)); } // (-π,π]
-
-    function lockRestart(){ restartLockUntil = performance.now() + CONFIG.RESTART_DELAY_MS; }
-    function canRestart(){ return performance.now() >= restartLockUntil; }
-
-
-    // Bright random color (HSV->RGB in JS)
-    function randRGB(){
-      const h = Math.random(); const s = 0.7 + Math.random()*0.3; const v = 0.9;
-      const i = Math.floor(h * 6);
-      const f = h * 6 - i;
-      const p = v * (1 - s);
-      const q = v * (1 - f * s);
-      const t = v * (1 - (1 - f) * s);
-      let r=0,g=0,b=0;
-      switch (i % 6) {
-      case 0: r=v; g=t; b=p; break;
-      case 1: r=q; g=v; b=p; break;
-      case 2: r=p; g=v; b=t; break;
-      case 3: r=p; g=q; b=v; break;
-      case 4: r=t; g=p; b=v; break;
-      case 5: r=v; g=p; b=q; break;
-      }
-      return [r,g,b];
-    }
-
-    // ---------- Difficulty helpers ----------
-    const TAU = Math.PI * 2;
-    const lerp = (a,b,t)=>a+(b-a)*t;
-    const wrapTau = (a)=>((a%TAU)+TAU)%TAU;
-
-    function progress() {
-      // 0..1 (0 at start, 1 when hitsToGo==0)
-      return 1 - (hitsToGo / CONFIG.HITS_TARGET);
-    }
-    function currentDifficulty() {
-      return lerp(CONFIG.DIFF_START, CONFIG.DIFF_END, progress());
-    }
-
-    /** Pick next target near player; gets closer as difficulty rises */
-    function pickTargetNear(playerTheta, dirSign) {
-      const diff = currentDifficulty(); // 0..1
-      const minSepDeg = lerp(CONFIG.SEP_EASY_DEG, CONFIG.SEP_HARD_DEG, diff);
-      const minSep = minSepDeg * Math.PI / 180;
-
-      // Slight randomness but biased toward closer end
-      const maxSep = Math.max(minSep * 1.6, minSep + 0.15);
-      const t = Math.random();                 // 0..1
-      const sep = lerp(maxSep, minSep, t*t);   // quadratic bias to "closer"
-
-      // Mostly ahead of the player (harder), sometimes behind (easier)
-      const ahead = Math.random() < CONFIG.AHEAD_BIAS ? 1 : -1;
-      const sign  = ahead * Math.sign(dirSign || 1);
-      return wrapTau(playerTheta + sign * sep);
-    }
-
-
-    function updateCenterLabel() {
-      centerCountEl.classList.remove('win','lose');
-      if (gameOver && !won) { centerCountEl.textContent = 'GAME OVER'; centerCountEl.classList.add('lose'); }
-      else if (won)         { centerCountEl.textContent = 'YOU WIN!';  centerCountEl.classList.add('win');  }
-      else                  { centerCountEl.textContent = String(hitsToGo); }
-    }
-    updateCenterLabel();
-
-    function resize() {
-      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
-      const width = Math.floor(innerWidth * dpr);
-      const height = Math.floor(innerHeight * dpr);
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
-      gl.viewport(0, 0, canvas.width, canvas.height);
-    }
-    window.addEventListener('resize', resize, { passive: true });
-    resize();
-
-    function baseAngularContact(orbitR_px) {
-      const clamped = Math.max(0, Math.min(1, dotPx / Math.max(orbitR_px,1)));
-      return 2 * Math.asin(clamped); // radians for edge-touch
-    }
-    function tolRadians(){
-      const orbitR_px = circlePx + offsetPx;
-      const base = baseAngularContact(orbitR_px);
-      return base * (200 - CONFIG.PRECISION_PERCENT) / 100; // 100% => base, 0% => 2*base
-    }
-
-    function frame(tMs) {
-      const dt = Math.max(0, (tMs - prev) * 0.001);
-      prev = tMs;
-      const time = (tMs - start) * 0.001;
-
-      if (!gameOver && !won) {
-
-        // Scale base speed up to +30% across the run
-        speed = CONFIG.SPEED_RAD_S * (1 + 0.30 * currentDifficulty());
-
-        theta += dir * speed * dt;
-
-        if (vanishing) {
-          // Play vanish animation; suppress miss logic
-          vanishT += dt;
-          if (vanishT >= CONFIG.VANISH_SEC) {
-
-            if (hitsToGo === 0) {
-              won = true;
-              updateCenterLabel();
-              SFX.playSound('win');
-              lockRestart();
-              showStats();
-            }
-
-            if (!won) {
-
-              const tol = tolRadians();
-              targetTheta = pickTargetNear(theta, dir); // << adaptive difficulty spawn
-              targetColor = randRGB();
-
-              // reset pass detection
-              const delta = normAngle(targetTheta - theta);
-              deltaPrev = delta;
-              inBandPrev = (Math.abs(delta) <= tol);
-              armedAfterCross = false;
-
-
-            }
-            vanishing = false;
-            vanishT = 0;
-          }
-
-
-        } else {
-          // Normal pass detection
-          const tol   = tolRadians();
-          const delta = normAngle(targetTheta - theta);
-          const inBand = Math.abs(delta) <= tol;
-
-          // Crossing near center only
-          let crossedNear = false;
-          if (deltaPrev !== null) {
-            const signChange = Math.sign(deltaPrev) !== Math.sign(delta);
-            const nearWindow = Math.max(tol * 2.5, 0.10);
-            const minAbs = Math.min(Math.abs(deltaPrev), Math.abs(delta));
-            crossedNear = signChange && (minAbs <= nearWindow);
-          }
-
-          
-          // auto-misses (no user action)
-          if (crossedNear && !inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); }
-
-          if (crossedNear && (inBandPrev || inBand)) armedAfterCross = true;
-          
-          if (armedAfterCross && inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); }
-
-
-
-
-
-          deltaPrev  = delta;
-          inBandPrev = inBand;
-
-          if (gameOver) updateCenterLabel();
+    if (vanishing) {
+      vanishT += dt;
+      if (vanishT >= CONFIG.VANISH_SEC) {
+        if (hitsToGo === 0) {
+          won = true; updateCenterLabel(); SFX.playSound('win'); lockRestart(); showStats(); saveResult('win');
         }
-
-
+        if (!won) {
+          const tol = tolRadians();
+          targetTheta = pickTargetNear(theta, dir);
+          targetColor = randRGB();
+          const delta = normAngle(targetTheta - theta);
+          deltaPrev = delta; inBandPrev = (Math.abs(delta) <= tol);
+          armedAfterCross = false;
+        }
+        vanishing = false; vanishT = 0;
       }
-
-      // Uniforms
-      gl.uniform2f(uResolution, canvas.width, canvas.height);
-      gl.uniform1f(uTime, time);
-      gl.uniform1f(uCirclePx, circlePx);
-      gl.uniform1f(uDotPx, dotPx);
-      gl.uniform1f(uOffsetPx, offsetPx);
-      gl.uniform1f(uTheta, theta);
-      gl.uniform1f(uTargetTheta, targetTheta);
-
-      // Target animation scale (ease-out cubic)
-      let scale = 1.0;
-      if (vanishing) {
-        const t = Math.min(1, vanishT / CONFIG.VANISH_SEC);
-        const ease = 1 - Math.pow(1 - t, 3);
-        scale = 1 - ease; // 1 -> 0
+    } else {
+      const tol = tolRadians(), delta = normAngle(targetTheta - theta), inBand = Math.abs(delta) <= tol;
+      let crossedNear = false;
+      if (deltaPrev !== null) {
+        const signChange = Math.sign(deltaPrev) !== Math.sign(delta);
+        const nearWindow = Math.max(tol * 2.5, 0.10);
+        const minAbs = Math.min(Math.abs(deltaPrev), Math.abs(delta));
+        crossedNear = signChange && (minAbs <= nearWindow);
       }
-      gl.uniform1f(uTargetScale, scale);
-
-      // Use the right color: frozen vanish color during animation, current otherwise
-      const col = vanishing ? vanishColor : targetColor;
-      gl.uniform3f(uTargetColor, col[0], col[1], col[2]);
-
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      requestAnimationFrame(frame);
+      if (crossedNear && !inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); saveResult('miss'); }
+      if (crossedNear && (inBandPrev || inBand)) armedAfterCross = true;
+      if (armedAfterCross && inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); saveResult('miss'); }
+      deltaPrev = delta; inBandPrev = inBand;
+      if (gameOver) updateCenterLabel();
     }
+  }
+
+  gl.uniform2f(uResolution, canvas.width, canvas.height);
+  gl.uniform1f(uTime, time);
+  gl.uniform1f(uCirclePx, circlePx);
+  gl.uniform1f(uDotPx, dotPx);
+  gl.uniform1f(uOffsetPx, offsetPx);
+  gl.uniform1f(uTheta, theta);
+  gl.uniform1f(uTargetTheta, targetTheta);
+
+  let scale = 1.0;
+  if (vanishing) {
+    const t = Math.min(1, vanishT / CONFIG.VANISH_SEC);
+    const ease = 1 - Math.pow(1 - t, 3);
+    scale = 1 - ease;
+  } else if (!started || document.body.classList.contains('ui-paused')) {
+      scale = 0.0; // hide target when overlays are open or before start
+    }
+
+    gl.uniform1f(uTargetScale, scale);
+    const col = vanishing ? vanishColor : targetColor;
+    gl.uniform3f(uTargetColor, col[0], col[1], col[2]);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
     requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
 
-    // ----- Input / Gameplay -----
+  function isUIBusy(){
+    const overlayOpen = profileOverlay.classList.contains('open') || resultsOverlay.classList.contains('open') || splash.style.display !== 'none';
+    const ae = document.activeElement;
+    const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+    return overlayOpen || typing;
+  }
 
-    function attemptHit(){
-      if (vanishing) return; // ignore while animating
-
-      // If game is over or won, tapping/space restarts — but only after the lock expires
-      if (gameOver || won) {
-        if (!canRestart()) return; // too soon; ignore this tap
-        restart();
-        return;
-      }
-
-      const tol = tolRadians();
-      const d   = Math.abs(normAngle(theta - targetTheta));
-
-      if (d <= tol) {
-        // Proper HIT — record precision (1 is perfect, 0 is just at the edge)
-        const precision = Math.max(0, 1 - d / tol);
-        precisionSum += precision;
-        hitsMade += 1;
-        showLastHitPrecision(precision);
-
-        hitsToGo = Math.max(0, hitsToGo - 1);
-        dir = -dir;
-        vanishing = true;
-        vanishT = 0;
-        vanishColor = targetColor.slice(); // freeze color for animation
-        armedAfterCross = false;           // pause miss logic until next target
-        updateCenterLabel();
-        SFX.playSound('pip');
-
-        // If that hit ends the run, pre-lock restart so the same tap can't auto-restart
-        if (hitsToGo === 0) lockRestart();
-
-      } else {
-        // MISS (user action) -> end game, lock restarts, and show stats
-        gameOver = true;
-        updateCenterLabel();
-        SFX.playSound('zong');
-        lockRestart();
-        showStats();
-      }
+  function attemptHit(){
+    if (!started || paused || isUIBusy()) return;
+    if (vanishing) return;
+    if (gameOver || won) { if (!canRestart()) return; restart(); return; }
+    const tol = tolRadians();
+    const d   = Math.abs(normAngle(theta - targetTheta));
+    if (d <= tol) {
+      const precision = Math.max(0, 1 - d / tol);
+      precisionSum += precision; hitsMade += 1; showLastHitPrecision(precision);
+      hitsToGo = Math.max(0, hitsToGo - 1);
+      dir = -dir; vanishing = true; vanishT = 0; vanishColor = targetColor.slice();
+      armedAfterCross = false; updateCenterLabel(); SFX.playSound('pip');
+      if (hitsToGo === 0) lockRestart();
+    } else {
+      gameOver = true; updateCenterLabel(); SFX.playSound('zong'); lockRestart(); showStats(); saveResult('miss');
     }
+  }
 
 
+  function restart(){
+    if (paused || isUIBusy()) return;
+    restartLockUntil = 0;
+    hitsMade = 0; precisionSum = 0; hideStats(); savedThisRun = false;
+    hitsToGo = CONFIG.HITS_TARGET; gameOver = false; won = false;
+    dir = 1.0; speed = CONFIG.SPEED_RAD_S; theta = Math.PI * 0.5;
+    targetTheta = (theta + Math.PI) % (Math.PI * 2);
+    targetColor = randRGB(); deltaPrev = null; inBandPrev = false; armedAfterCross = false;
+    vanishing = false; vanishT = 0; updateCenterLabel();
 
-    function restart(){
-      restartLockUntil = 0;
-      hitsMade = 0;
-      precisionSum = 0;
-      hideStats();
+    roundStartMs = performance.now();  // <-- NEW
+    prev = roundStartMs;               // <-- NEW
+  }
 
-      hitsToGo = CONFIG.HITS_TARGET;
-      gameOver = false;
-      won = false;
-      dir = 1.0;
-      speed = CONFIG.SPEED_RAD_S;
-      theta = Math.PI * 0.5;
 
-      targetTheta = (theta + Math.PI) % (Math.PI * 2); // keep your 180° start
-      targetColor = randRGB();
-      deltaPrev = null;
-      inBandPrev = false;
-      armedAfterCross = false;
-      vanishing = false;
-      vanishT = 0;
+  // --- Input ---
+  const canvasEl = canvas;
+  canvasEl.addEventListener('pointerdown', (e)=>{ e.preventDefault(); attemptHit(); });
+  window.addEventListener('keydown', (e)=>{
+    if (isUIBusy()) return;
+    if (e.code === 'Space') { e.preventDefault(); attemptHit(); }
+    else if (e.code === 'KeyR') { e.preventDefault(); restart(); }
+    else if (e.code === 'KeyP') { e.preventDefault(); togglePause(); }
+  });
+
+  canvasEl.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); });
+  canvasEl.addEventListener('webglcontextrestored', ()=>{ location.reload(); });
+
+  // --- Splash start ---
+  splash.style.display = 'grid';
+  startBtn.addEventListener('click', async ()=>{
+    splash.style.display = 'none';
+    SFX.init();
+    SFX.playSound('click');
+
+    // Warm up token on start if we have a profile
+    try {
+      const prof = await idbGet('profile','data');
+      if (prof && prof.email) await Tokens.ensure();
+    } catch {}
+
+    setTimeout(()=>{
+      started = true;
+      setPause(false, { user:false });
+      roundStartMs = performance.now();  // <-- start timing here
+      prev = roundStartMs;               // keep animation delta consistent
       updateCenterLabel();
-    }
+    }, CONFIG.START_DELAY_MS);
 
 
-    // Inputs: tap/click or Space to HIT; tap/Space also restart if over; R always restarts
-    canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); attemptHit(); });
-    window.addEventListener('keydown', (e) => {
-      if (e.code === 'Space') { e.preventDefault(); attemptHit(); }
-      else if (e.code === 'KeyR') { e.preventDefault(); restart(); }
-    });
 
-    canvas.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); });
-    canvas.addEventListener('webglcontextrestored', ()=>{ location.reload(); });
-  })();
+  });
+})();
 </script>
+
+
+
 </body>
 </html>

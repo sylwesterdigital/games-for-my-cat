@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>WebGL2 Rainbow — Orbit & Hit</title>
+
+
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; overflow: hidden; -webkit-touch-callout: none; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+    body, canvas { touch-action: none; }
+    canvas { display: block; width: 100vw; height: 100vh; }
+
+    #hud {
+      position: fixed; left: .75rem; bottom: .75rem;
+      color: #000; font: 12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      opacity: .95; user-select: none; pointer-events: none; line-height: 1.25;
+      background: rgba(255,255,255,.9); padding: .35rem .6rem; border-radius: .5rem;
+    }
+    
+    #centerCount {
+      position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      color: white; 
+      font:600 29px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: none; 
+      border-radius: 999px; padding: .35rem 1rem;
+      user-select: none; pointer-events: none;
+      mix-blend-mode: exclusion;
+    }
+    #centerCount.win  { background: rgba(0,255,160,.9); color:#022; }    
+    #centerCount.lose { color:white }
+
+    #stats{
+      position:fixed; left:50%; top:.5rem; transform:translateX(-50%);
+      color:#000; font:600 24px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:rgba(255,255,255,.9); border-radius:.5rem; padding:.25rem .6rem;
+      user-select:none; pointer-events:none; opacity:.95;
+      white-space: pre-line; 
+      text-align: center;
+    }
+
+    #lastHit{
+      position:fixed; left:50%; top:3.25rem; transform:translateX(-50%);
+      color:#000; font:600 18px system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:rgba(255,255,255,.9); border-radius:.5rem; padding:.15rem .5rem;
+      user-select:none; pointer-events:none; opacity:0; transition:opacity .25s;
+      white-space:nowrap;
+    }
+
+
+
+  </style>
+
+
+</head>
+<body>
+  <canvas id="glcanvas"></canvas>
+  <div id="centerCount">50</div>
+  <div id="stats"></div>
+  <div id="lastHit"></div>
+
+  <div id="hud"><b>Tap/Click or press <kbd>Space</kbd> to HIT • Tap/Space while Game Over to Restart • <kbd>R</kbd> also restarts</b></div>
+
+  <script>
+
+
+
+
+/**
+ * dSFX — ultra-small Web Audio game SFX helper.
+ * Usage: SFX.init(); SFX.playSound('pip', { duration:0.12, frequency:880 })
+ */
+    const SFX = (() => {
+      const ctxState = { ctx: null, master: null };
+
+      const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+      const now = () => (ctxState.ctx ? ctxState.ctx.currentTime : 0);
+
+  // Default ADSR (seconds) + synth opts
+      const base = {
+    type: 'tone',        // 'tone' | 'noise'
+    wave: 'sine',        // 'sine' | 'square' | 'sawtooth' | 'triangle'
+    duration: 0.08,      // total length (fallback if no release)
+    attack: 0.002,
+    decay: 0.06,
+    sustain: 0.0,
+    release: 0.04,
+    volume: 0.5,
+    pan: 0,              // -1..1
+    frequency: 880,
+    frequencyEnd: null,  // if set, linear sweep to this freq
+    detune: 0,           // cents
+    freqRand: 0,         // randomize frequency by ±this fraction (e.g. 0.05 = ±5%)
+    filter: null,        // { type:'lowpass'|'highpass'|'bandpass', frequency: 1200, Q: 0.7 }
+  };
+
+  // Small preset set: pip, click, hit, zong, win
+  const presets = {
+    pip:   { ...base, type:'tone', wave:'sine',  attack:0.001, decay:0.06, sustain:0, release:0.03, duration:0.09, frequency:1200, freqRand:0.04, volume:0.4 },
+    click: { ...base, type:'noise',              attack:0.001, decay:0.02, sustain:0, release:0.02, duration:0.03, filter:{type:'highpass',frequency:3000,Q:0.8}, volume:0.35 },
+    hit:   { ...base, type:'noise',              attack:0.001, decay:0.12, sustain:0, release:0.06, duration:0.16, filter:{type:'bandpass',frequency:500,Q:2}, freqRand:0.1, volume:0.5 },
+    zong:  { ...base, type:'tone', wave:'sine',  attack:0.003, decay:0.5,  sustain:0, release:0.25, duration:0.7,  frequency:220,  frequencyEnd:110, volume:0.45 },
+    win:   { ...base, type:'tone', wave:'triangle', attack:0.005, decay:0.25, sustain:0.0, release:0.22, duration:0.5,
+     volume:0.5, pan:0, frequency:520, frequencyEnd:1560, detune:0, freqRand:0.02,
+     filter:{ type:'lowpass', frequency:3400, Q:0.7 } }
+   };
+
+  // ——— internals ———
+   const ensureCtx = () => {
+    if (ctxState.ctx) return ctxState.ctx;
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const master = ctx.createGain();
+    master.gain.value = 0.9;
+    master.connect(ctx.destination);
+    ctxState.ctx = ctx;
+    ctxState.master = master;
+    return ctx;
+  };
+
+  const createNoiseBuffer = (ctx) => {
+    const length = 0.5 * ctx.sampleRate; // 0.5s buffer
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+      return buffer;
+  };
+  let sharedNoise = null;
+
+  const scheduleADSR = (gainNode, t0, { attack, decay, sustain, release, duration, volume }) => {
+    const g = gainNode.gain;
+    const a = clamp(attack, 0, 2);
+    const d = clamp(decay, 0, 3);
+    const r = clamp(release ?? 0, 0, 3);
+    const total = duration ?? (a + d + r || 0.1);
+    const sustainLevel = clamp(sustain ?? 0, 0, 1);
+
+    g.cancelScheduledValues(t0);
+    g.setValueAtTime(0.0001, t0);
+    g.linearRampToValueAtTime(volume, t0 + a);
+    g.linearRampToValueAtTime(volume * sustainLevel, t0 + a + d);
+    // Hold until release start (total - r)
+    const relStart = Math.max(t0 + a + d, t0 + total - r);
+    g.setValueAtTime(g.value, relStart);
+    g.linearRampToValueAtTime(0.0001, relStart + r);
+    return { end: relStart + r };
+  };
+
+  const applyFilter = (ctx, src, opts) => {
+    if (!opts.filter) return src;
+    const { type, frequency, Q } = opts.filter;
+    const biquad = ctx.createBiquadFilter();
+    biquad.type = type || 'lowpass';
+    biquad.frequency.value = frequency ?? 1000;
+    biquad.Q.value = Q ?? 0.0001;
+    src.connect(biquad);
+    return biquad;
+  };
+
+  const applyPanner = (ctx, src, pan) => {
+    if (pan == null) return src;
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (!p) return src;
+    p.pan.value = clamp(pan, -1, 1);
+    src.connect(p);
+    return p;
+  };
+
+  // ——— public API ———
+  return {
+    init() {
+      const ctx = ensureCtx();
+      // Must be resumed by a user gesture on some browsers
+      if (ctx.state === 'suspended') ctx.resume();
+    },
+
+    /**
+     * Play a preset or custom sound.
+     * @param {string} name - 'pip' | 'click' | 'hit' | 'zong' | 'win' | any custom key
+     * @param {Object} opts - overrides; see "base" for fields
+     * @returns {{ stop: () => void, endedAt: number }}
+     */
+    playSound(name, opts = {}) {
+      const ctx = ensureCtx();
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const preset = presets[name] || base;
+      const o = { ...preset, ...opts };
+
+      const t0 = Math.max(now(), ctx.currentTime);
+
+      // Source
+      let sourceNode;
+      if (o.type === 'tone') {
+        const osc = ctx.createOscillator();
+        osc.type = o.wave || 'sine';
+        const baseFreq = o.frequency ?? 440;
+        const jitter = (o.freqRand ?? 0) * baseFreq;
+        const fStart = baseFreq + (Math.random() * 2 - 1) * jitter;
+        const fEnd = (o.frequencyEnd ?? fStart) + (Math.random() * 2 - 1) * jitter;
+
+        osc.frequency.setValueAtTime(Math.max(1, fStart), t0);
+        if (fEnd !== fStart) osc.frequency.linearRampToValueAtTime(Math.max(1, fEnd), t0 + (o.duration ?? 0.1));
+        if (o.detune) osc.detune.setValueAtTime(o.detune, t0);
+
+        sourceNode = osc;
+      } else {
+        if (!sharedNoise) sharedNoise = createNoiseBuffer(ctx);
+        const noise = ctx.createBufferSource();
+        noise.buffer = sharedNoise;
+        noise.loop = false;
+        sourceNode = noise;
+      }
+
+      // Envelope -> Filter -> Panner -> Master
+      const env = ctx.createGain();
+      env.gain.value = 0;
+      const filtered = applyFilter(ctx, env, o);
+      const panned = applyPanner(ctx, filtered, o.pan);
+      const chainEnd = panned || filtered || env;
+
+      chainEnd.connect(ctxState.master);
+      sourceNode.connect(env);
+
+      const { end } = scheduleADSR(env, t0, o);
+
+      // Start/stop
+      if (sourceNode.start) sourceNode.start(t0);
+      const stopAt = end + 0.01;
+      if (sourceNode.stop) sourceNode.stop(stopAt);
+
+      // For oscillators ensure disconnection after stop
+      sourceNode.onended = () => {
+        try { sourceNode.disconnect(); } catch {}
+        try { env.disconnect(); } catch {}
+        try { chainEnd.disconnect && chainEnd.disconnect(); } catch {}
+      };
+
+      return {
+        stop: () => {
+          const t = now();
+          env.gain.cancelScheduledValues(t);
+          env.gain.setTargetAtTime(0.0001, t, 0.01);
+          try { sourceNode.stop(t + 0.03); } catch {}
+        },
+        endedAt: stopAt
+      };
+    },
+
+    // Expose presets for tweaking or adding
+    presets,
+
+    // Master volume 0..1
+    setMasterVolume(v) {
+      ensureCtx();
+      ctxState.master.gain.value = clamp(v, 0, 1);
+    }
+  };
+})();
+
+
+
+
+
+
+
+(function () {
+
+
+
+// ======= CONFIG (easy to tweak) =========================================
+
+
+  const CONFIG = {
+
+      HITS_TARGET:      50,  // hits to win
+
+      CIRCLE_RADIUS_PX: 260, // main white circle radius (px)
+      DOT_RADIUS_PX:    60,  // player + target dot radius (px)
+      ORBIT_OFFSET_PX:  65,  // distance from circle edge to orbit path (px)
+      SPEED_RAD_S:      4, // angular speed (rad/s)
+      PRECISION_PERCENT: 95, // 100 = strict (edge-touch), 0 = very lenient
+      VANISH_SEC:       0.30, // target shrink animation duration (s)
+
+      // --- difficulty ---
+      DIFF_START: 0.20,   // starting difficulty (0 easy … 1 hard)
+      DIFF_END:   0.95,   // difficulty at the end of the run
+      SEP_EASY_DEG: 140,  // min angular separation at start (deg)
+      SEP_HARD_DEG:  22,  // min angular separation at end (deg)
+      AHEAD_BIAS:   0.65, // chance to spawn ahead of the player (with current dir)
+
+      RESTART_DELAY_MS: 600,
+
+    };
+
+
+    // =======================================================================
+
+    const canvas = document.getElementById('glcanvas');
+    const gl = canvas.getContext('webgl2', {
+      alpha: false, antialias: false, desynchronized: true,
+      powerPreference: 'high-performance', preserveDrawingBuffer: false
+    });
+    if (!gl) {
+      document.body.innerHTML = '<p style="color:white;padding:1rem;font:16px system-ui">WebGL2 not supported.</p>';
+      return;
+    }
+
+    // === Shaders ============================================================
+    const VS = `#version 300 es
+    precision highp float;
+    layout(location=0) in vec2 aPos;
+    out vec2 vUV;
+    void main(){
+      vUV = aPos*0.5 + 0.5;
+      gl_Position = vec4(aPos,0.0,1.0);
+  }`;
+
+    // uTargetScale animates shrinking; uTargetColor gives each target a random color
+  const FS = `#version 300 es
+    precision highp float;
+    out vec4 fragColor;
+    in vec2 vUV;
+
+    uniform vec2  uResolution;
+    uniform float uTime;
+
+    uniform float uCirclePx;
+    uniform float uDotPx;
+    uniform float uOffsetPx;
+
+    uniform float uTheta;
+    uniform float uTargetTheta;
+    uniform float uTargetScale;  // 1..0
+    uniform vec3  uTargetColor;  // RGB color for current/vanishing target
+
+    vec3 hsv2rgb(vec3 c){
+      vec3 p = abs(fract(c.xxx + vec3(0., 2./3., 1./3.)) * 6. - 3.);
+      vec3 rgb = clamp(p - 1., 0., 1.);
+      return c.z * mix(vec3(1.), rgb, c.y);
+    }
+
+    void main(){
+      float pixel = 1.0 / max(uResolution.y, 1.0);
+
+      vec2 centered = vUV - 0.5;
+      float aspect = uResolution.x / max(uResolution.y, 1.0);
+      vec2 p = vec2(centered.x * aspect, centered.y);
+
+      float ang = atan(p.y,p.x);
+      float hue = fract(ang / 6.28318530718 + 0.5 + uTime * 0.05 + vUV.x * 0.15);
+      vec3 bg = hsv2rgb(vec3(hue, 1.0, 1.0));
+
+      float r       = uCirclePx  * pixel;
+      float offsetN = uOffsetPx  * pixel;
+      float dotR    = uDotPx     * pixel;
+      float orbitR  = r + offsetN;
+
+      // White central circle
+      float d = length(p);
+      float w = fwidth(d) * 1.5;          // ~1.5 pixels of antialias
+      float edge = smoothstep(r, r - w, d);
+      vec3 color = mix(vec3(1.0), bg, edge);
+
+      // Target with animated scale; keep its color during vanish
+      float tR    = dotR * max(uTargetScale, 0.0);
+      vec2  tC    = vec2(cos(uTargetTheta), sin(uTargetTheta)) * orbitR;
+      float dT    = length(p - tC);
+      float tMask = 1.0 - smoothstep(tR, tR + 1.5*pixel, dT);
+      // Fade the influence slightly with scale but keep hue (no black flash)
+      float tint = mix(0.0, 1.0, max(uTargetScale, 0.0));
+      color = mix(color, uTargetColor, tMask * tint);
+
+      // Player (black)
+      vec2  pC    = vec2(cos(uTheta), sin(uTheta)) * orbitR;
+      float dP    = length(p - pC);
+      float pMask = 1.0 - smoothstep(dotR, dotR + 1.5*pixel, dP);
+      color = mix(color, vec3(0.0), pMask);
+
+      fragColor = vec4(color,1.0);
+}`;
+
+function createShader(type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(sh));
+    throw new Error('Shader compile error');
+  }
+  return sh;
+}
+function createProgram(vsSrc, fsSrc) {
+  const vs = createShader(gl.VERTEX_SHADER, vsSrc);
+  const fs = createShader(gl.FRAGMENT_SHADER, fsSrc);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(prog));
+    throw new Error('Program link error');
+  }
+  gl.deleteShader(vs); gl.deleteShader(fs);
+  return prog;
+}
+
+const program = createProgram(VS, FS);
+gl.useProgram(program);
+
+    // Fullscreen triangle
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+const vbo = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0);
+gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+    // Uniforms
+const uResolution   = gl.getUniformLocation(program, 'uResolution');
+const uTime         = gl.getUniformLocation(program, 'uTime');
+const uCirclePx     = gl.getUniformLocation(program, 'uCirclePx');
+const uDotPx        = gl.getUniformLocation(program, 'uDotPx');
+const uOffsetPx     = gl.getUniformLocation(program, 'uOffsetPx');
+const uTheta        = gl.getUniformLocation(program, 'uTheta');
+const uTargetTheta  = gl.getUniformLocation(program, 'uTargetTheta');
+const uTargetScale  = gl.getUniformLocation(program, 'uTargetScale');
+const uTargetColor  = gl.getUniformLocation(program, 'uTargetColor');
+
+    // ----- Game state -----
+const centerCountEl = document.getElementById('centerCount');
+
+const statsEl = document.getElementById('stats');
+let hitsMade = 0;
+let precisionSum = 0; // sum of hit precision in [0..1]
+
+function hideStats(){ statsEl.textContent = ''; }
+function showStats(){
+  const avg = hitsMade ? Math.round((precisionSum / hitsMade) * 100) : 0;
+  statsEl.textContent = `${hitsMade}/${CONFIG.HITS_TARGET} hit\r\n${avg}% precision`;
+}
+
+const lastHitEl = document.getElementById('lastHit');
+let lastHitTimer = null;
+
+function showLastHitPrecision(p){
+  const pct = Math.round(p * 100);
+  lastHitEl.textContent = `precision ${pct}%`;
+  clearTimeout(lastHitTimer);
+  lastHitEl.style.opacity = '1';            // show
+  lastHitTimer = setTimeout(() => {
+    lastHitEl.style.opacity = '0';          // fade out after 700ms
+  }, 700);
+}
+
+
+
+let start   = performance.now();
+let prev    = start;
+
+let dir      = 1.0;
+let speed    = CONFIG.SPEED_RAD_S;
+let theta    = Math.PI * 0.5;
+let circlePx = CONFIG.CIRCLE_RADIUS_PX;
+let dotPx    = CONFIG.DOT_RADIUS_PX;
+let offsetPx = CONFIG.ORBIT_OFFSET_PX;
+
+//let targetTheta = randAngle();
+let targetTheta = (theta + Math.PI) % (Math.PI * 2); // spawn ~180° from start
+
+
+let hitsToGo = CONFIG.HITS_TARGET;
+let gameOver = false;
+let won      = false;
+
+    // Miss / crossing detection (ignores 180° opposite wrap)
+    let deltaPrev   = null; // last delta (-π..π]
+    let inBandPrev  = false;
+    let armedAfterCross = false;
+
+    // Vanish animation state
+    let vanishing = false;
+    let vanishT   = 0; // seconds since hit
+    let targetColor = randRGB();       // current target color
+    let vanishColor = targetColor.slice(); // frozen color during vanish
+    let restartLockUntil = 0; // timestamp until which restarts are ignored
+
+
+    function randAngle() { return Math.random() * Math.PI * 2; }
+    function normAngle(a){ return Math.atan2(Math.sin(a), Math.cos(a)); } // (-π,π]
+
+    function lockRestart(){ restartLockUntil = performance.now() + CONFIG.RESTART_DELAY_MS; }
+    function canRestart(){ return performance.now() >= restartLockUntil; }
+
+
+    // Bright random color (HSV->RGB in JS)
+    function randRGB(){
+      const h = Math.random(); const s = 0.7 + Math.random()*0.3; const v = 0.9;
+      const i = Math.floor(h * 6);
+      const f = h * 6 - i;
+      const p = v * (1 - s);
+      const q = v * (1 - f * s);
+      const t = v * (1 - (1 - f) * s);
+      let r=0,g=0,b=0;
+      switch (i % 6) {
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
+      }
+      return [r,g,b];
+    }
+
+    // ---------- Difficulty helpers ----------
+    const TAU = Math.PI * 2;
+    const lerp = (a,b,t)=>a+(b-a)*t;
+    const wrapTau = (a)=>((a%TAU)+TAU)%TAU;
+
+    function progress() {
+      // 0..1 (0 at start, 1 when hitsToGo==0)
+      return 1 - (hitsToGo / CONFIG.HITS_TARGET);
+    }
+    function currentDifficulty() {
+      return lerp(CONFIG.DIFF_START, CONFIG.DIFF_END, progress());
+    }
+
+    /** Pick next target near player; gets closer as difficulty rises */
+    function pickTargetNear(playerTheta, dirSign) {
+      const diff = currentDifficulty(); // 0..1
+      const minSepDeg = lerp(CONFIG.SEP_EASY_DEG, CONFIG.SEP_HARD_DEG, diff);
+      const minSep = minSepDeg * Math.PI / 180;
+
+      // Slight randomness but biased toward closer end
+      const maxSep = Math.max(minSep * 1.6, minSep + 0.15);
+      const t = Math.random();                 // 0..1
+      const sep = lerp(maxSep, minSep, t*t);   // quadratic bias to "closer"
+
+      // Mostly ahead of the player (harder), sometimes behind (easier)
+      const ahead = Math.random() < CONFIG.AHEAD_BIAS ? 1 : -1;
+      const sign  = ahead * Math.sign(dirSign || 1);
+      return wrapTau(playerTheta + sign * sep);
+    }
+
+
+    function updateCenterLabel() {
+      centerCountEl.classList.remove('win','lose');
+      if (gameOver && !won) { centerCountEl.textContent = 'GAME OVER'; centerCountEl.classList.add('lose'); }
+      else if (won)         { centerCountEl.textContent = 'YOU WIN!';  centerCountEl.classList.add('win');  }
+      else                  { centerCountEl.textContent = String(hitsToGo); }
+    }
+    updateCenterLabel();
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+      const width = Math.floor(innerWidth * dpr);
+      const height = Math.floor(innerHeight * dpr);
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    window.addEventListener('resize', resize, { passive: true });
+    resize();
+
+    function baseAngularContact(orbitR_px) {
+      const clamped = Math.max(0, Math.min(1, dotPx / Math.max(orbitR_px,1)));
+      return 2 * Math.asin(clamped); // radians for edge-touch
+    }
+    function tolRadians(){
+      const orbitR_px = circlePx + offsetPx;
+      const base = baseAngularContact(orbitR_px);
+      return base * (200 - CONFIG.PRECISION_PERCENT) / 100; // 100% => base, 0% => 2*base
+    }
+
+    function frame(tMs) {
+      const dt = Math.max(0, (tMs - prev) * 0.001);
+      prev = tMs;
+      const time = (tMs - start) * 0.001;
+
+      if (!gameOver && !won) {
+
+        // Scale base speed up to +30% across the run
+        speed = CONFIG.SPEED_RAD_S * (1 + 0.30 * currentDifficulty());
+
+        theta += dir * speed * dt;
+
+        if (vanishing) {
+          // Play vanish animation; suppress miss logic
+          vanishT += dt;
+          if (vanishT >= CONFIG.VANISH_SEC) {
+
+            if (hitsToGo === 0) {
+              won = true;
+              updateCenterLabel();
+              SFX.playSound('win');
+              lockRestart();
+              showStats();
+            }
+
+            if (!won) {
+
+              const tol = tolRadians();
+              targetTheta = pickTargetNear(theta, dir); // << adaptive difficulty spawn
+              targetColor = randRGB();
+
+              // reset pass detection
+              const delta = normAngle(targetTheta - theta);
+              deltaPrev = delta;
+              inBandPrev = (Math.abs(delta) <= tol);
+              armedAfterCross = false;
+
+
+            }
+            vanishing = false;
+            vanishT = 0;
+          }
+
+
+        } else {
+          // Normal pass detection
+          const tol   = tolRadians();
+          const delta = normAngle(targetTheta - theta);
+          const inBand = Math.abs(delta) <= tol;
+
+          // Crossing near center only
+          let crossedNear = false;
+          if (deltaPrev !== null) {
+            const signChange = Math.sign(deltaPrev) !== Math.sign(delta);
+            const nearWindow = Math.max(tol * 2.5, 0.10);
+            const minAbs = Math.min(Math.abs(deltaPrev), Math.abs(delta));
+            crossedNear = signChange && (minAbs <= nearWindow);
+          }
+
+          
+          // auto-misses (no user action)
+          if (crossedNear && !inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); }
+
+          if (crossedNear && (inBandPrev || inBand)) armedAfterCross = true;
+          
+          if (armedAfterCross && inBandPrev && !inBand) { gameOver = true; SFX.playSound('zong'); lockRestart(); showStats(); }
+
+
+
+
+
+          deltaPrev  = delta;
+          inBandPrev = inBand;
+
+          if (gameOver) updateCenterLabel();
+        }
+
+
+      }
+
+      // Uniforms
+      gl.uniform2f(uResolution, canvas.width, canvas.height);
+      gl.uniform1f(uTime, time);
+      gl.uniform1f(uCirclePx, circlePx);
+      gl.uniform1f(uDotPx, dotPx);
+      gl.uniform1f(uOffsetPx, offsetPx);
+      gl.uniform1f(uTheta, theta);
+      gl.uniform1f(uTargetTheta, targetTheta);
+
+      // Target animation scale (ease-out cubic)
+      let scale = 1.0;
+      if (vanishing) {
+        const t = Math.min(1, vanishT / CONFIG.VANISH_SEC);
+        const ease = 1 - Math.pow(1 - t, 3);
+        scale = 1 - ease; // 1 -> 0
+      }
+      gl.uniform1f(uTargetScale, scale);
+
+      // Use the right color: frozen vanish color during animation, current otherwise
+      const col = vanishing ? vanishColor : targetColor;
+      gl.uniform3f(uTargetColor, col[0], col[1], col[2]);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    // ----- Input / Gameplay -----
+
+    function attemptHit(){
+      if (vanishing) return; // ignore while animating
+
+      // If game is over or won, tapping/space restarts — but only after the lock expires
+      if (gameOver || won) {
+        if (!canRestart()) return; // too soon; ignore this tap
+        restart();
+        return;
+      }
+
+      const tol = tolRadians();
+      const d   = Math.abs(normAngle(theta - targetTheta));
+
+      if (d <= tol) {
+        // Proper HIT — record precision (1 is perfect, 0 is just at the edge)
+        const precision = Math.max(0, 1 - d / tol);
+        precisionSum += precision;
+        hitsMade += 1;
+        showLastHitPrecision(precision);
+
+        hitsToGo = Math.max(0, hitsToGo - 1);
+        dir = -dir;
+        vanishing = true;
+        vanishT = 0;
+        vanishColor = targetColor.slice(); // freeze color for animation
+        armedAfterCross = false;           // pause miss logic until next target
+        updateCenterLabel();
+        SFX.playSound('pip');
+
+        // If that hit ends the run, pre-lock restart so the same tap can't auto-restart
+        if (hitsToGo === 0) lockRestart();
+
+      } else {
+        // MISS (user action) -> end game, lock restarts, and show stats
+        gameOver = true;
+        updateCenterLabel();
+        SFX.playSound('zong');
+        lockRestart();
+        showStats();
+      }
+    }
+
+
+
+    function restart(){
+      restartLockUntil = 0;
+      hitsMade = 0;
+      precisionSum = 0;
+      hideStats();
+
+      hitsToGo = CONFIG.HITS_TARGET;
+      gameOver = false;
+      won = false;
+      dir = 1.0;
+      speed = CONFIG.SPEED_RAD_S;
+      theta = Math.PI * 0.5;
+
+      targetTheta = (theta + Math.PI) % (Math.PI * 2); // keep your 180° start
+      targetColor = randRGB();
+      deltaPrev = null;
+      inBandPrev = false;
+      armedAfterCross = false;
+      vanishing = false;
+      vanishT = 0;
+      updateCenterLabel();
+    }
+
+
+    // Inputs: tap/click or Space to HIT; tap/Space also restart if over; R always restarts
+    canvas.addEventListener('pointerdown', (e) => { e.preventDefault(); attemptHit(); });
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); attemptHit(); }
+      else if (e.code === 'KeyR') { e.preventDefault(); restart(); }
+    });
+
+    canvas.addEventListener('webglcontextlost', (e)=>{ e.preventDefault(); });
+    canvas.addEventListener('webglcontextrestored', ()=>{ location.reload(); });
+  })();
+</script>
+</body>
+</html>
